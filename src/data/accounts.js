@@ -1,11 +1,13 @@
-export default [
-  { id: 1, username: "teacher01", password: "123456", role: "老師" },
-  { id: 2, username: "teacher02", password: "abc123", role: "老師" },
-  { id: 3, username: "staff01", password: "111111", role: "行政" },
-  { id: 4, username: "admin", password: "admin888", role: "管理員" },
-];
+// src/data/accounts.js
+// ✅ 單一資料來源：欄位統一 username/password/role/name
+
 export const accounts = [
-  { account: "admin", password: "1234", name: "管理員A" },
-  { account: "root", password: "0000", name: "超級管理員" },
-  { account: "staff1", password: "abcd", name: "教務處專員" },
+  // 管理者
+  { id: 1, username: "admin", password: "admin", role: "管理員", name: "管理員A" },
+
+
+
+  { id: 5, username: "122214217", password: "1234", role: "學生", name: "宸維" },
 ];
+
+export default accounts;
