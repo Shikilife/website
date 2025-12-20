@@ -44,17 +44,26 @@ import { useUserStore } from "@/stores/user";
 
 const router = useRouter();
 const user = useUserStore();
-const emit = defineEmits(["close"]);
+
+// ✅ 多加一個 open-auth 事件：通知 App.vue 打開 AuthModal
+const emit = defineEmits(["close", "open-auth"]);
 
 function go(path) {
   router.push(path);
   emit("close");
 }
 
-function logoutUser() {
-  user.logout(); // ✅ 用 store action
+// ✅ 登出後：關選單 → 回到 /courses(或/) → 叫 App.vue 打開 AuthModal
+async function logoutUser() {
+  await user.logout(); // ✅ 用 store action（mock / 真 API 都會走這裡）
+
   emit("close");
-  router.push("/");
+
+  // 你想回到哪裡都可以：建議 /courses 比 / 更一致（看你路由）
+  router.push("/courses");
+
+  // ✅ 重點：讓 App.vue 幫你把登入視窗打開
+  emit("open-auth");
 }
 </script>
 

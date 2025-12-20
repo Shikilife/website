@@ -78,31 +78,18 @@
 </template>
 
 <script setup>
-import { ref, computed } from "vue";
+import { computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
+import { useUserStore } from "@/stores/user";
 
 const router = useRouter();
+const user = useUserStore();
 
-/**
- * ⭐ 這裡先用 DEMO 資料
- * 之後你要改成從 Pinia / API 取得收藏清單，可以直接改 favorites.value
- */
-const favorites = ref([
-  // 範例（之後你可以改成 []，或實作真正的收藏）
-  // {
-  //   dept: "資管系",
-  //   name: "資料庫管理系統",
-  //   grade: "2A",
-  //   people: 40,
-  //   teacher: "連中岳",
-  //   category: "專業必修",
-  //   credit: 3,
-  //   room: "F602",
-  //   day: "二",
-  //   section: "2~4",
-  // },
-]);
+onMounted(() => {
+  if (user.isLoggedIn) user.loadCollections();
+});
 
+const favorites = computed(() => user.favorites || []);
 const count = computed(() => favorites.value.length);
 
 function backHome() {
@@ -112,7 +99,8 @@ function backHome() {
 function deleteAll() {
   if (!favorites.value.length) return;
   if (confirm("確定要刪除所有收藏課程？")) {
-    favorites.value = [];
+    user.favorites = [];
+    user._saveCollections();
   }
 }
 </script>

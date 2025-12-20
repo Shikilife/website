@@ -14,12 +14,23 @@
             目前為展示版（Demo），後續串 API 後會自動帶入完整資料。
           </p>
 
-          <!-- ✅ 移除：原本放在這裡的 actions（不要出現在上方） -->
+          <!-- ✅ 返回按鈕（桌機） -->
+          <div class="profile-actions">
+            <button class="p3-btn p3-btn-ghost profile-btn" @click="goBack">
+              ← 返回上一頁
+            </button>
+            <button class="p3-btn p3-btn-primary profile-btn" @click="goCourses">
+              回課程查詢
+            </button>
+          </div>
         </div>
 
-        <!-- 右上：顯示完整姓名 -->
+        <!-- ✅ 右上：顯示完整姓名 + avatar -->
         <div class="profile-head-right">
           <div class="profile-userbox" :title="displayName">
+            <div class="profile-avatar" aria-hidden="true">
+              <span>{{ avatarText }}</span>
+            </div>
             <div class="profile-usertext">
               <div class="profile-username">{{ displayName }}</div>
               <div class="profile-role">{{ roleText }}</div>
@@ -57,29 +68,18 @@
         </table>
       </div>
 
-      <!-- Footer -->
+      <!-- Footer hint + 手機返回 -->
       <div class="profile-foot">
         <div class="profile-hint">
-          Tip：之後串 API 時，只要把 store 補上對應欄位，這頁不用大改。
+          Tip：之後串 API 時，只要把 store.profile 補上對應欄位，這頁不用大改 ✅
         </div>
 
-        <!-- ✅ 右下角按鈕區：照角色顯示一顆 -->
-        <div class="profile-actions-bottom">
-          <!-- 管理者：返回上一頁 -->
-          <button
-            v-if="isAdmin"
-            class="p3-btn p3-btn-ghost profile-btn"
-            @click="goBack"
-          >
+        <!-- ✅ 返回按鈕（手機/窄螢幕會比較好按） -->
+        <div class="profile-actions profile-actions-bottom">
+          <button class="p3-btn p3-btn-ghost profile-btn" @click="goBack">
             ← 返回上一頁
           </button>
-
-          <!-- 學生：回課程查詢 -->
-          <button
-            v-else
-            class="p3-btn p3-btn-primary profile-btn"
-            @click="goCourses"
-          >
+          <button class="p3-btn p3-btn-primary profile-btn" @click="goCourses">
             回課程查詢
           </button>
         </div>
@@ -89,25 +89,92 @@
 </template>
 
 <script setup>
-import { computed } from "vue";
+import { computed, onMounted } from "vue";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import { useUserStore } from "@/stores/user";
 
 const router = useRouter();
 const userStore = useUserStore();
-const { username, isAdmin } = storeToRefs(userStore);
+
+/**
+ * ✅ 這裡假設你的 store 有：
+ * - isLoggedIn
+ * - isAdmin
+ * - username
+ * - profile（可選，之後串 API 再補）
+ */
+const { username, isAdmin, isLoggedIn } = storeToRefs(userStore);
+
+// profile 可能不存在，這裡保守處理
+const profile = computed(() => userStore.profile || null);
 
 const roleText = computed(() => (isAdmin.value ? "管理者" : "學生"));
 const idLabel = computed(() => (isAdmin.value ? "編號" : "學號"));
 
-const displayName = computed(() => (username.value || "-").trim() || "-");
-const idValue = computed(() => "-");
-const genderText = computed(() => "-");
-const classText = computed(() => "-");
-const phoneText = computed(() => "-");
-const addressText = computed(() => "-");
-const emailText = computed(() => "-");
+/**
+ * ✅ 顯示資料優先順序：
+ * 1) store.profile.name / fullName
+ * 2) store.username
+ * 3) "-"
+ */
+const displayName = computed(() => {
+  const p = profile.value || {};
+  const n =
+    (p.name || p.fullName || p.displayName || "").toString().trim() ||
+    (username.value || "").toString().trim() ||
+    "-";
+  return n || "-";
+});
+
+const idValue = computed(() => {
+  const p = profile.value || {};
+  // 管理者：可用 id / adminId；學生：可用 studentId / username
+  const v = isAdmin.value
+    ? p.id ?? p.adminId ?? p.userId
+    : p.studentId ?? p.id ?? username.value;
+  return (v ?? "-").toString();
+});
+
+const genderText = computed(() => {
+  const p = profile.value || {};
+  const g = (p.gender ?? "").toString().trim().toLowerCase();
+  if (!g) return "-";
+  if (["m", "male", "男"].includes(g)) return "男";
+  if (["f", "female", "女"].includes(g)) return "女";
+  return p.gender || "-";
+});
+
+const classText = computed(() => {
+  const p = profile.value || {};
+  return (p.className || p.class || p.gradeClass || "-").toString().trim() || "-";
+});
+
+const phoneText = computed(() => {
+  const p = profile.value || {};
+  return (p.phone || p.mobile || "-").toString().trim() || "-";
+});
+
+const addressText = computed(() => {
+  const p = profile.value || {};
+  return (p.address || "-").toString().trim() || "-";
+});
+
+const emailText = computed(() => {
+  const p = profile.value || {};
+  return (p.email || p.mail || "-").toString().trim() || "-";
+});
+
+/** ✅ Avatar：中文取第一字；英文取首字母（遇到空白會跳過） */
+const avatarText = computed(() => {
+  const n = displayName.value;
+  if (!n || n === "-") return "?";
+
+  // 去掉前後空白，抓第一個「不是空白」的字
+  const first = n.replace(/\s+/g, " ").trim().slice(0, 1);
+  if (!first) return "?";
+  return first.toUpperCase();
+});
 
 function goBack() {
   if (window.history.length > 1) router.back();
@@ -117,6 +184,14 @@ function goBack() {
 function goCourses() {
   router.push("/courses");
 }
+
+/**
+ * ✅ 保護：沒登入不給看 Profile（避免訪客直接輸入網址）
+ * 如果你希望訪客也能看 Demo，就把這段拿掉
+ */
+onMounted(() => {
+  if (!isLoggedIn.value) router.replace("/courses");
+});
 </script>
 
 <style scoped>
@@ -179,7 +254,20 @@ function goCourses() {
   font-size: 13px;
 }
 
-/* 右上：User box */
+/* ✅ actions */
+.profile-actions {
+  margin-top: 14px;
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.profile-btn {
+  padding: 10px 16px;
+  border-radius: 12px;
+}
+
+/* ✅ 右上：User box */
 .profile-userbox {
   display: flex;
   align-items: center;
@@ -190,6 +278,20 @@ function goCourses() {
   border: 1px solid rgba(148, 123, 255, 0.20);
   box-shadow: 0 0 22px rgba(148, 123, 255, 0.10);
   max-width: 280px;
+}
+
+.profile-avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(47, 230, 255, 0.18);
+  box-shadow: 0 0 18px rgba(47, 230, 255, 0.10);
+  font-weight: 900;
+  font-size: 18px;
+  flex: 0 0 auto;
 }
 
 .profile-usertext {
@@ -263,8 +365,8 @@ function goCourses() {
 }
 
 .mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-    "Liberation Mono", "Courier New", monospace;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
 }
 
 .truncate {
@@ -273,13 +375,13 @@ function goCourses() {
   text-overflow: ellipsis;
 }
 
-/* Footer：左 Tip + 右下角按鈕 */
+/* Footer */
 .profile-foot {
   margin-top: 14px;
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: flex-end; /* ✅ 讓按鈕自然落在右下角 */
+  align-items: center;
   flex-wrap: wrap;
 }
 
@@ -292,21 +394,11 @@ function goCourses() {
   font-size: 12px;
 }
 
-/* ✅ 右下角按鈕區 */
 .profile-actions-bottom {
-  margin-left: auto;      /* ✅ 推到最右 */
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
+  display: none;
 }
 
-.profile-btn {
-  padding: 10px 16px;
-  border-radius: 12px;
-  white-space: nowrap;
-}
-
-/* Mobile：Tip 跟按鈕一樣保持在下方好點按 */
+/* Mobile */
 @media (max-width: 720px) {
   .profile-head {
     flex-direction: column;
@@ -316,14 +408,11 @@ function goCourses() {
     max-width: 100%;
     justify-content: flex-start;
   }
-
-  .profile-foot {
-    flex-direction: column;
-    align-items: stretch;
+  .profile-actions {
+    display: none;
   }
   .profile-actions-bottom {
-    width: 100%;
-    justify-content: flex-end; /* ✅ 手機也靠右 */
+    display: flex;
   }
 }
 </style>

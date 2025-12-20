@@ -3,10 +3,10 @@
     <section class="ct-card">
       <!-- 標題 & 操作 -->
       <header class="ct-head">
-        <div class="min-w-0">
+        <div class="ct-head-left">
           <h1 class="ct-title">我的課表</h1>
           <p class="ct-sub">
-            目前為模擬課表（可放入課程卡片）。之後可從「預選 / 收藏」或 API 自動帶入。
+            顯示「預選課程」排入課表（僅顯示課程名稱與教室）。
           </p>
         </div>
 
@@ -15,10 +15,15 @@
         </div>
       </header>
 
-      <!-- 週次提示（可選） -->
+      <!-- 狀態提示 -->
       <div class="ct-info">
         <span class="ct-pill"><span class="dot"></span> 本週模式</span>
-        <span class="ct-pill"><span class="dot dot2"></span> Demo 資料</span>
+        <span class="ct-pill soft">
+          預選共 {{ totalCount }} 門｜已排入 {{ placedCount }} 門
+        </span>
+        <span v-if="unplacedCount > 0" class="ct-pill warn">
+          有 {{ unplacedCount }} 門缺少上課時間（day/start），暫時不顯示
+        </span>
       </div>
 
       <!-- 課表 -->
@@ -35,7 +40,7 @@
           </thead>
 
           <tbody>
-            <tr v-for="(p, i) in periods" :key="i">
+            <tr v-for="(p, rowIndex) in periods" :key="rowIndex">
               <td class="ct-cell-time ct-sticky">
                 <div class="ct-period">{{ p.name }}</div>
               </td>
@@ -45,23 +50,13 @@
 
               <!-- 7 天 -->
               <td v-for="dayIndex in 7" :key="dayIndex" class="ct-cell-slot">
-                <!-- ✅ 只在「起始節次」畫卡片；被 span 覆蓋的格子不畫 -->
-                <template v-for="course in getCoursesAt(dayIndex, i)" :key="course.id">
-                  <div
-                    class="ct-course"
-                    :style="courseStyle(course)"
-                    :title="courseTitle(course)"
-                  >
-                    <div class="ct-course-top">
-                      <div class="ct-course-name">{{ course.name }}</div>
-                      <div class="ct-course-tag">{{ course.dept }}</div>
-                    </div>
-
-                    <div class="ct-course-meta">
-                      <span class="ct-course-chip">{{ course.teacher }}</span>
-                      <span class="ct-course-chip">{{ course.room }}</span>
-                      <span class="ct-course-chip">{{ course.credit }} 學分</span>
-                    </div>
+                <template
+                  v-for="course in getCoursesAt(dayIndex, rowIndex)"
+                  :key="course._slotId"
+                >
+                  <div class="ct-course" :style="courseStyle(course)" :title="courseTitle(course)">
+                    <div class="ct-course-name">{{ course.name }}</div>
+                    <div class="ct-course-room">{{ course.room }}</div>
                   </div>
                 </template>
               </td>
@@ -81,16 +76,20 @@
 </template>
 
 <script setup>
+import { computed, onMounted } from "vue";
 import { useRouter } from "vue-router";
+import { useUserStore } from "@/stores/user";
 
 const router = useRouter();
+const user = useUserStore();
+
+onMounted(() => {
+  // ✅ 進課表就同步載入預選（避免刷新後空）
+  if (user.isLoggedIn) user.loadCollections?.();
+});
 
 const weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"];
 
-/**
- * periods index = rowIndex
- * 0 -> 第一節, 1 -> 第二節 ...
- */
 const periods = [
   { name: "一", time: "08:10~09:00" },
   { name: "二", time: "09:10~10:00" },
@@ -103,82 +102,159 @@ const periods = [
   { name: "九", time: "16:40~17:30" },
 ];
 
-/**
- * ✅ Demo 課程資料（之後串 API 就把這份替換成 API 回來的陣列）
- * day: 1~7（星期一到星期日）
- * start: 起始節次 index（0=一節）
- * span: 佔用幾節（2=連上兩節）
- */
-const demoCourses = [
-  {
-    id: 1,
-    day: 2, // 星期二
-    start: 1, // 第二節
-    span: 3, // 2~4
-    name: "資料庫管理系統",
-    dept: "資管系",
-    teacher: "連中岳",
-    room: "F602",
-    credit: 3,
-    tone: "cyan",
-  },
-  {
-    id: 2,
-    day: 1, // 星期一
-    start: 7, // 第八節
-    span: 2,
-    name: "作業系統",
-    dept: "資工系",
-    teacher: "王老師",
-    room: "C301",
-    credit: 3,
-    tone: "violet",
-  },
-  {
-    id: 3,
-    day: 5, // 星期五
-    start: 0, // 第一節
-    span: 3,
-    name: "人工智慧",
-    dept: "資工系",
-    teacher: "林老師",
-    room: "E201",
-    credit: 3,
-    tone: "lime",
-  },
-];
-
-/**
- * ✅ 只在該格是「課程起點」時回傳該課程
- * dayIndex: 1~7
- * rowIndex: 0~8
- */
-function getCoursesAt(dayIndex, rowIndex) {
-  return demoCourses.filter((c) => c.day === dayIndex && c.start === rowIndex);
+function safeStr(v) {
+  return v == null ? "" : String(v);
 }
 
 /**
- * ✅ 課程卡片樣式：用 CSS 變數決定顏色 + 用 grid-row 以視覺跨節次
- * 這裡我們用「絕對高度」的方式做跨節次：把卡片高度設為 span * cellHeight
- * cellHeight 由 CSS 的 --ct-row-h 控制
+ * ✅ 關鍵：只吃「明確欄位」(day/start/span)
+ * 不再從字串猜，避免 span 爆掉造成跑版
+ *
+ * 你可以在加入預選時，把課程轉成：
+ * { day: 1~7, start: 0~8, span?: 1~4, name, room, ... }
  */
+function parseTimesSlotToStartSpan(timesSlot) {
+  // timesSlot 可能是: "6,7" / "1,2,3" / "6" / "" / null
+  const s = String(timesSlot ?? "").trim();
+  if (!s) return null;
+
+  // 取出所有數字節次
+  const nums = s
+    .split(/[,\s]+/g)
+    .map((x) => Number(String(x).trim()))
+    .filter((n) => Number.isFinite(n) && n >= 1 && n <= periods.length);
+
+  if (!nums.length) return null;
+
+  nums.sort((a, b) => a - b);
+
+  // ✅ start: 用最小節次 - 1 -> 0-based rowIndex
+  const start = nums[0] - 1;
+
+  // ✅ span: 節次數量（通常是連續的，像 6,7）
+  // 這裡不要用 max-min+1，避免 "1,3" 這種不連續變成跨兩格
+  let span = nums.length;
+
+  // ✅ span 防呆：1~4（避免資料怪掉又變柱子）
+  span = Math.max(1, Math.min(4, Math.floor(span)));
+
+  return { start, span };
+}
+
+function dayToNumber(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return null;
+
+  // 1~7
+  if (/^[1-7]$/.test(s)) return Number(s);
+
+  // "一二三四五六日/天"
+  const mapZh = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 7, 天: 7 };
+  if (mapZh[s] != null) return mapZh[s];
+
+  // "星期二"
+  if (s.startsWith("星期")) {
+    const c = s.replace("星期", "");
+    if (mapZh[c] != null) return mapZh[c];
+  }
+
+  return null;
+}
+
+function normalizeToSlot(rawCourse, idx) {
+  // ✅ 關鍵：你 preselects 存的是 viewCourse（day/section/...）
+  // 但也可能帶 __raw（若你 toViewCourse 有塞 __raw）
+  const c = rawCourse?.__raw ?? rawCourse;
+
+  const name =
+    c.courseName ??
+    c.name ??
+    c.courseENName ??
+    c.title ??
+    rawCourse?.name ??
+    "未命名課程";
+
+  const room =
+    c.classroom ??
+    c.room ??
+    c.location ??
+    rawCourse?.room ??
+    "—";
+
+  // ✅ 先抓 DayOfWeek（API raw），抓不到就用 viewCourse.day（"二"）
+  const day =
+    dayToNumber(c.DayOfWeek) ??
+    dayToNumber(c.day) ??
+    dayToNumber(rawCourse?.day);
+
+  const okDay = typeof day === "number" && day >= 1 && day <= 7;
+  if (!okDay) return null;
+
+  // ✅ timesSlot 在 API raw 叫 timesSlot
+  // ✅ viewCourse 叫 section
+  const slotStr =
+    c.timesSlot ??
+    c.section ??
+    rawCourse?.section ??
+    rawCourse?.timesSlot;
+
+  const slot = parseTimesSlotToStartSpan(slotStr);
+  if (!slot) return null;
+
+  const { start, span } = slot;
+
+  const tones = ["cyan", "violet", "lime"];
+  const tone = c.tone || tones[(day + start) % tones.length];
+
+  return {
+    _slotId: String(c.courseID ?? c.id ?? rawCourse?.courseID ?? idx),
+    day,
+    start,
+    span,
+    name,
+    room,
+    tone,
+  };
+}
+
+
+const rawPreselects = computed(() => user.preselects || []);
+
+const normalizedCourses = computed(() => {
+  const src = rawPreselects.value;
+  const list = [];
+  for (let i = 0; i < src.length; i++) {
+    const slot = normalizeToSlot(src[i], i);
+    if (slot) list.push(slot);
+  }
+  return list;
+});
+
+const totalCount = computed(() => rawPreselects.value.length);
+const placedCount = computed(() => normalizedCourses.value.length);
+const unplacedCount = computed(() => Math.max(0, totalCount.value - placedCount.value));
+
+function getCoursesAt(dayIndex, rowIndex) {
+  return normalizedCourses.value.filter((c) => c.day === dayIndex && c.start === rowIndex);
+}
+
 function courseStyle(course) {
   const toneMap = {
-    cyan: { a: "var(--p3-neon)", b: "rgba(47,230,255,0.25)" },
-    violet: { a: "var(--p3-neon2)", b: "rgba(148,123,255,0.22)" },
-    lime: { a: "var(--p3-lime)", b: "rgba(106,255,212,0.18)" },
+    cyan: { a: "var(--p3-neon)", b: "rgba(47,230,255,0.22)" },
+    violet: { a: "var(--p3-neon2)", b: "rgba(148,123,255,0.20)" },
+    lime: { a: "var(--p3-lime)", b: "rgba(106,255,212,0.16)" },
   };
   const tone = toneMap[course.tone] || toneMap.cyan;
 
   return {
     "--ct-accent": tone.a,
     "--ct-glow": tone.b,
-    height: `calc(var(--ct-row-h) * ${course.span} + (${course.span - 1} * var(--ct-row-gap)))`,
+    height: `calc(var(--ct-row-h) * ${course.span})`,
   };
 }
 
 function courseTitle(course) {
-  return `${course.name}\n${course.dept}｜${course.teacher}\n${course.room}｜${course.credit}學分`;
+  return `${course.name}\n教室：${course.room}`;
 }
 
 function goHome() {
@@ -187,17 +263,12 @@ function goHome() {
 </script>
 
 <style scoped>
-/* ✅ 專屬課表：不要再塞 p3-* 的 CourseSearch CSS，避免互相打架 */
-
-/* root */
 .ct-root{
   padding: clamp(16px, 2.4vw, 28px);
   width: 100%;
 }
 
-/* card */
 .ct-card{
-  /* 用 persona.css 的玻璃卡風格當底 */
   background: rgba(30, 50, 80, 0.70);
   border: 1px solid rgba(47, 230, 255, 0.25);
   border-radius: 18px;
@@ -208,7 +279,6 @@ function goHome() {
   position: relative;
 }
 
-/* subtle neon line */
 .ct-card::before{
   content:"";
   position:absolute;
@@ -223,7 +293,6 @@ function goHome() {
   opacity: .85;
 }
 
-/* header */
 .ct-head{
   display:flex;
   justify-content: space-between;
@@ -232,12 +301,13 @@ function goHome() {
   padding-top: 8px;
 }
 
+.ct-head-left{ min-width: 0; }
+
 .ct-title{
   font-size: clamp(18px, 2.4vw, 26px);
   font-weight: 900;
   letter-spacing: .06em;
   margin: 0;
-  text-shadow: 0 0 18px rgba(47,230,255,0.12);
 }
 
 .ct-sub{
@@ -245,14 +315,11 @@ function goHome() {
   color: rgba(210, 230, 255, 0.85);
   line-height: 1.6;
   font-size: 13px;
-  max-width: 720px;
+  max-width: 760px;
 }
 
-.ct-head-actions{
-  flex: 0 0 auto;
-}
+.ct-head-actions{ flex: 0 0 auto; }
 
-/* info pills */
 .ct-info{
   margin-top: 14px;
   display:flex;
@@ -270,18 +337,23 @@ function goHome() {
   border: 1px solid rgba(255,255,255,0.12);
   color: rgba(234,242,255,0.88);
   font-size: 12px;
-  font-weight: 700;
+  font-weight: 800;
+}
+
+.ct-pill.soft{
+  background: rgba(47,230,255,0.06);
+  border-color: rgba(47,230,255,0.18);
+}
+
+.ct-pill.warn{
+  background: rgba(255,190,80,0.08);
+  border-color: rgba(255,190,80,0.22);
 }
 
 .dot{
   width: 6px; height: 6px; border-radius: 50%;
   background: var(--p3-neon);
   box-shadow: 0 0 12px rgba(47,230,255,0.8);
-}
-.dot2{
-  width: 6px; height: 6px; border-radius: 50%;
-  background: var(--p3-lime);
-  box-shadow: 0 0 12px rgba(106,255,212,0.6);
 }
 
 /* buttons */
@@ -295,6 +367,7 @@ function goHome() {
   background: rgba(255,255,255,0.06);
   color: rgba(234,242,255,0.92);
   transition: transform .12s ease, box-shadow .18s ease, background .18s ease;
+  white-space: nowrap;
 }
 .ct-btn:hover{
   transform: translateY(-1px);
@@ -309,7 +382,7 @@ function goHome() {
 .ct-table-wrap{
   margin-top: 16px;
   border-radius: 16px;
-  overflow: auto; /* ✅ 讓小螢幕可橫滑，避免整頁 overflow */
+  overflow: auto;
   border: 1px solid rgba(255,255,255,0.10);
   background: rgba(12, 26, 44, 0.45);
 }
@@ -317,20 +390,19 @@ function goHome() {
 /* table */
 .ct-table{
   width: 100%;
-  min-width: 980px; /* ✅ 表格寬度不夠就橫滑，不爆版 */
+  min-width: 980px;          /* ✅ 不硬縮，避免你截圖那種擠爆 */
   border-collapse: separate;
   border-spacing: 0;
   font-size: 13px;
 
-  /* ✅ 控制跨節次高度 */
-  --ct-row-h: 56px;
-  --ct-row-gap: 0px;
+  --ct-row-h: 54px;          /* ✅ 統一格子高度 */
+  table-layout: fixed;       /* ✅ 欄寬固定 */
 }
 
 .ct-table thead th{
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: 5;
   background: rgba(255,255,255,0.08);
   color: rgba(234,242,255,0.90);
   font-weight: 900;
@@ -340,58 +412,48 @@ function goHome() {
   white-space: nowrap;
 }
 
-.ct-table tbody td{
-  border-bottom: 1px solid rgba(255,255,255,0.06);
-}
-
-/* columns */
-.ct-col-period{ width: 64px; }
-.ct-col-time{ width: 140px; }
-.ct-col-day{ min-width: 140px; }
+.ct-col-period{ width: 70px; }
+.ct-col-time{ width: 160px; }
+.ct-col-day{ width: 150px; }
 
 /* time cells */
 .ct-cell-time{
   padding: 10px 10px;
-  background: rgba(255,255,255,0.04);
+  background: rgba(12, 26, 44, 0.70);
   color: rgba(234,242,255,0.88);
   font-weight: 800;
   white-space: nowrap;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
 }
 
-.ct-period{
-  font-size: 14px;
-}
-.ct-time{
-  font-size: 12px;
-  color: rgba(190,210,255,0.80);
-}
-
-/* sticky left columns (節次/時間) */
 .ct-sticky{
   position: sticky;
   left: 0;
-  z-index: 1;
-  backdrop-filter: blur(8px);
+  z-index: 6;
+  backdrop-filter: blur(10px);
+  box-shadow: 12px 0 18px rgba(0,0,0,0.18);
 }
 .ct-sticky2{
   position: sticky;
-  left: 64px;
-  z-index: 1;
-  backdrop-filter: blur(8px);
+  left: 70px;
+  z-index: 6;
+  backdrop-filter: blur(10px);
+  box-shadow: 12px 0 18px rgba(0,0,0,0.14);
 }
 
-/* slot cell */
 .ct-cell-slot{
   position: relative;
   padding: 10px;
   height: var(--ct-row-h);
+  border-bottom: 1px solid rgba(255,255,255,0.06);
   background:
     linear-gradient(rgba(255,255,255,0.06) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255,255,255,0.04) 1px, transparent 1px);
   background-size: 100% 100%, 36px 36px;
+  overflow: visible;
 }
 
-/* course card */
+/* ✅ 精簡卡片（只顯示 名稱 + 教室） */
 .ct-course{
   position: absolute;
   left: 10px;
@@ -399,18 +461,18 @@ function goHome() {
   top: 10px;
 
   border-radius: 14px;
-  padding: 10px 10px 10px;
+  padding: 10px 12px;
   background: rgba(25, 45, 75, 0.78);
   border: 1px solid rgba(255,255,255,0.12);
   backdrop-filter: blur(16px);
 
-  /* neon accent */
   box-shadow:
     0 12px 26px rgba(0,0,0,0.28),
     0 0 0 1px rgba(255,255,255,0.06),
     0 0 18px var(--ct-glow);
 
   overflow: hidden;
+  z-index: 4;
 }
 
 .ct-course::before{
@@ -422,47 +484,24 @@ function goHome() {
   opacity: .95;
 }
 
-.ct-course-top{
-  display:flex;
-  align-items:flex-start;
-  justify-content: space-between;
-  gap: 10px;
-}
-
 .ct-course-name{
   font-weight: 900;
-  letter-spacing: .02em;
   color: rgba(234,242,255,0.95);
   line-height: 1.25;
   font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
-.ct-course-tag{
-  flex: 0 0 auto;
-  font-size: 11px;
-  font-weight: 900;
-  color: rgba(234,242,255,0.86);
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.10);
-  padding: 4px 8px;
-  border-radius: 999px;
-}
-
-.ct-course-meta{
-  margin-top: 10px;
-  display:flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.ct-course-chip{
-  font-size: 11px;
+.ct-course-room{
+  margin-top: 6px;
+  font-size: 12px;
   font-weight: 800;
-  color: rgba(234,242,255,0.86);
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.10);
-  padding: 4px 8px;
-  border-radius: 999px;
+  color: rgba(190,210,255,0.86);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* bottom */
@@ -474,10 +513,5 @@ function goHome() {
 @media (max-width: 768px){
   .ct-head-actions{ display:none; }
   .ct-bottom{ display:block; }
-}
-
-/* ✅ 手機最小化字級，避免擠爆 */
-@media (max-width: 420px){
-  .ct-sub{ font-size: 12px; }
 }
 </style>

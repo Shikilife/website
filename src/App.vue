@@ -1,18 +1,11 @@
 <template>
-  <vue-particles
-    id="tsparticles"
-    :options="particlesOptions"
-    :particlesInit="particlesInit"
-    class="p3-particles-layer"
-  />
+  <vue-particles id="tsparticles" :options="particlesOptions" :particlesInit="particlesInit"
+    class="p3-particles-layer" />
 
   <div class="p3-app min-h-screen w-full">
     <header :class="['p3-topbar', isHome ? 'p3-topbar-glass' : 'p3-topbar-solid']">
       <div class="p3-topbar-inner">
-        <div
-          class="flex items-center gap-4 min-w-0 group cursor-pointer"
-          @click="$router.push('/')"
-        >
+        <div class="flex items-center gap-4 min-w-0 group cursor-pointer" @click="$router.push('/')">
           <div class="logo-wrapper">
             <img src="/logo.png" alt="logo" class="w-12 h-12 rounded-md p3-logo" />
             <div class="logo-glow"></div>
@@ -28,7 +21,7 @@
         </div>
 
         <div class="flex items-center">
-          <!-- ✅ 永遠呼叫 function openAuth() -->
+          <!-- ✅ 未登入：永遠呼叫 openAuth() -->
           <button v-if="!user.isLoggedIn" @click="openAuth" class="p3-login-btn-new">
             <span class="btn-content">
               <span class="btn-icon">✦</span>
@@ -37,18 +30,20 @@
             <div class="btn-shine"></div>
           </button>
 
-          <div v-else class="relative">
-            <button @click="toggleUserMenu" class="p3-user-btn">
+          <!-- ✅ 已登入：顯示使用者選單 -->
+          <div v-else class="relative" ref="menuWrap">
+            <button @click="toggleUserMenu" class="p3-user-btn" aria-haspopup="menu" :aria-expanded="userMenuOpen">
               <span class="user-name">{{ user.username }}</span>
               <span class="user-arrow">▼</span>
             </button>
-            <UserMenu v-if="userMenuOpen" @close="userMenuOpen = false" />
+            <UserMenu v-if="userMenuOpen" @close="userMenuOpen = false" @open-auth="openAuth" />
+
           </div>
         </div>
       </div>
     </header>
 
-    <!-- ✅ Route Page Transition（替換原本 <router-view />） -->
+    <!-- ✅ Route Page Transition -->
     <div class="p3-page-shell">
       <router-view v-slot="{ Component, route }">
         <transition name="p3-route" mode="out-in">
@@ -63,12 +58,17 @@
 </template>
 
 <script setup>
-import { ref, computed } from "vue";
+import { ref, computed, onMounted, onBeforeUnmount } from "vue";
 import { useRoute } from "vue-router";
 import { useUserStore } from "@/stores/user";
 import AuthModal from "@/components/AuthModal.vue";
 import UserMenu from "@/components/UserMenu.vue";
 import { loadSlim } from "tsparticles-slim";
+
+import { watch } from "vue";
+
+
+
 
 const route = useRoute();
 const user = useUserStore();
@@ -77,6 +77,7 @@ const isHome = computed(() => route.path === "/courses" || route.path === "/");
 
 const showAuthModal = ref(false);
 const userMenuOpen = ref(false);
+const menuWrap = ref(null);
 
 function toggleUserMenu() {
   userMenuOpen.value = !userMenuOpen.value;
@@ -91,6 +92,53 @@ function openAuth() {
 function closeAuth() {
   showAuthModal.value = false;
 }
+
+/** ✅ 點外面自動關閉 UserMenu（更正式更像真的產品） */
+function onDocClick(e) {
+  if (!userMenuOpen.value) return;
+  const el = menuWrap.value;
+  if (!el) return;
+  if (el.contains(e.target)) return;
+  userMenuOpen.value = false;
+}
+
+/**
+ * ✅ App 啟動時嘗試恢復登入狀態
+ * - 如果 user store 有 restoreSession / fetchMe / fetchProfile 就會自動呼叫
+ * - 沒有也不會壞（只是不會持久登入）
+ */
+async function bootAuth() {
+  try {
+    if (typeof user.restoreSession === "function") {
+      await user.restoreSession(); // 建議：從 localStorage token 取回，並打 /me 驗證
+    } else if (typeof user.fetchMe === "function") {
+      await user.fetchMe(); // 建議：直接打 /me 取得登入資訊
+    } else if (user.isLoggedIn && typeof user.fetchProfile === "function") {
+      await user.fetchProfile();
+    }
+  } catch (err) {
+    // ✅ 若 token 過期或驗證失敗：建議清掉登入狀態，避免 UI 卡住
+    if (typeof user.logout === "function") user.logout();
+  }
+}
+
+onMounted(async () => {
+  document.addEventListener("click", onDocClick);
+
+  // ✅ 進站時嘗試恢復登入狀態
+  await bootAuth();
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener("click", onDocClick);
+});
+
+watch(
+  () => user.isLoggedIn,
+  (ok) => {
+    if (ok) userMenuOpen.value = false; // ✅ 登入成功就關掉選單
+  }
+);
 
 // 粒子初始化
 const particlesInit = async (engine) => {
@@ -170,14 +218,12 @@ const particlesOptions = {
   left: 0;
   width: 100%;
   height: 2px;
-  background: linear-gradient(
-    90deg,
-    transparent 0%,
-    var(--neon-blue) 20%,
-    var(--neon-purple) 50%,
-    var(--neon-blue) 80%,
-    transparent 100%
-  );
+  background: linear-gradient(90deg,
+      transparent 0%,
+      var(--neon-blue) 20%,
+      var(--neon-purple) 50%,
+      var(--neon-blue) 80%,
+      transparent 100%);
   opacity: 0.8;
   box-shadow: 0 0 10px var(--neon-blue);
   animation: borderFlow 4s infinite linear;
@@ -188,9 +234,11 @@ const particlesOptions = {
     background-position: 0% 50%;
     opacity: 0.6;
   }
+
   50% {
     opacity: 1;
   }
+
   100% {
     background-position: 100% 50%;
     opacity: 0.6;
@@ -310,6 +358,7 @@ const particlesOptions = {
   0% {
     left: -100%;
   }
+
   100% {
     left: 200%;
   }
@@ -349,9 +398,9 @@ const particlesOptions = {
 .p3-route-enter-active,
 .p3-route-leave-active {
   transition:
-    opacity 0.55s cubic-bezier(.22,1,.36,1),
-    transform 0.55s cubic-bezier(.22,1,.36,1),
-    filter 0.55s cubic-bezier(.22,1,.36,1);
+    opacity 0.55s cubic-bezier(.22, 1, .36, 1),
+    transform 0.55s cubic-bezier(.22, 1, .36, 1),
+    filter 0.55s cubic-bezier(.22, 1, .36, 1);
   will-change: opacity, transform, filter;
 }
 
@@ -361,6 +410,7 @@ const particlesOptions = {
   transform: translateX(34px) skewX(-3deg);
   filter: blur(6px);
 }
+
 .p3-route-enter-to {
   opacity: 1;
   transform: translateX(0) skewX(0deg);
@@ -373,6 +423,7 @@ const particlesOptions = {
   transform: translateX(0) skewX(0deg);
   filter: blur(0);
 }
+
 .p3-route-leave-to {
   opacity: 0;
   transform: translateX(-34px) skewX(3deg);
@@ -382,11 +433,13 @@ const particlesOptions = {
 /* ✅ 包住頁面：避免 transform 造成水平 overflow */
 .p3-page-shell {
   width: 100%;
-  overflow-x: clip; /* 若不支援可改 hidden */
+  overflow-x: clip;
+  /* 若不支援可改 hidden */
 }
 
 /* ✅ reduced-motion：更穩、更專業 */
 @media (prefers-reduced-motion: reduce) {
+
   .p3-route-enter-active,
   .p3-route-leave-active {
     transition: none !important;

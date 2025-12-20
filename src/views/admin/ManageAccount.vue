@@ -1,5 +1,0 @@
-<template>
-  <div>
-    <h1>Manage Account</h1>
-  </div>
-</template>

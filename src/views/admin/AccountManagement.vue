@@ -17,6 +17,10 @@
         <button class="p3-btn p3-btn-primary" @click="onSearch" :disabled="isLoading">
           查詢
         </button>
+
+        <button class="p3-btn p3-btn-ghost" @click="refresh" :disabled="isLoading" title="重新抓取資料">
+          重新取得
+        </button>
       </div>
     </div>
 
@@ -55,6 +59,7 @@
         <div class="p3-table-sub">
           共 <b>{{ studentsView.length }}</b> 筆
           <span v-if="selectedId">｜已選：<b>{{ selectedId }}</b></span>
+          <span v-if="isLoading">｜載入中…</span>
         </div>
       </div>
 
@@ -98,20 +103,39 @@
               <td class="ellipsis" :title="s.email">{{ s.email }}</td>
             </tr>
 
-            <tr v-if="studentsView.length === 0">
+            <tr v-if="!isLoading && studentsView.length === 0">
               <td class="center empty" colspan="8">
                 沒有資料（可嘗試清空查詢或重新取得）
               </td>
             </tr>
+
+            <tr v-if="isLoading">
+              <td class="center empty" colspan="8">
+                讀取中…
+              </td>
+            </tr>
           </tbody>
         </table>
+      </div>
+
+      <!-- 小提示：你目前後端只有 GET 全表 -->
+      <div class="p3-hint">
+        ✅ 目前已串：GET <b>/api/users</b>（全表）｜🧪 查詢先用前端篩選｜
+        🧠 後續再補：GET 帶 query / DELETE / POST / PUT
       </div>
     </div>
   </div>
 </template>
 
 <script setup>
-import { computed, ref } from "vue";
+import { computed, onMounted, ref } from "vue";
+
+/**
+ * ✅ API Base
+ * - 若你有設定 Vite proxy（推薦）：就用相對路徑 "/api/users"
+ * - 若你沒有 proxy：可以在 .env 設定 VITE_API_BASE_URL=http://127.0.0.1:5000
+ */
+const API_BASE = import.meta?.env?.VITE_API_BASE_URL || "";
 
 const isLoading = ref(false);
 const errorMsg = ref("");
@@ -119,30 +143,121 @@ const errorMsg = ref("");
 const query = ref("");
 const selectedId = ref("");
 
-const students = ref([
-  {
-    id: "1001",
-    gender: "女",
-    name: "楊咔咔",
-    class: "資四1C",
-    phone: "0938501928",
-    address: "台北市信義區",
-    email: "aa@mail.com",
-  },
-  {
-    id: "1002",
-    gender: "女",
-    name: "王杯杯",
-    class: "資四1C",
-    phone: "0912582957",
-    address: "台中市西屯區",
-    email: "bb@ntunhs.tw",
-  },
-]);
+/**
+ * students：前端顯示用統一格式
+ * id, gender, name, class, phone, address, email
+ */
+const students = ref([]);
 
-// ✅ 之後串 API：studentsView 就是你顯示用資料源（可接查詢條件）
+/**
+ * ✅ 將後端 users 原始欄位「映射」成前端需要的欄位
+ * 因為你目前後端是 SELECT *，欄位名稱不一定剛好叫這些
+ * 所以做一層容錯 mapping，避免前端直接爆掉
+ */
+function normalizeUserRow(row) {
+  // ⚠️ 下面這些 key 是「可能」出現的命名
+  const id =
+    row.id ??
+    row.userID ??
+    row.studentId ??
+    row.student_id ??
+    row.account ??
+    "";
+
+  const gender =
+    row.gender ??
+    row.sex ??
+    row.Gender ??
+    "";
+
+  const name =
+    row.name ??
+    row.username ??
+    row.userName ??
+    row.fullname ??
+    "";
+
+  const cls =
+    row.class ??
+    row.className ??
+    row.class_name ??
+    row.departmentClass ??
+    "";
+
+  const phone =
+    row.phone ??
+    row.tel ??
+    row.mobile ??
+    row.phoneNumber ??
+    "";
+
+  const address =
+    row.address ??
+    row.addr ??
+    row.homeAddress ??
+    "";
+
+  const email =
+    row.email ??
+    row.mail ??
+    row.Email ??
+    "";
+
+  return {
+    id: String(id || ""),
+    gender: String(gender || ""),
+    name: String(name || ""),
+    class: String(cls || ""),
+    phone: String(phone || ""),
+    address: String(address || ""),
+    email: String(email || ""),
+  };
+}
+
+/**
+ * ✅ 現在可串的 API：GET /api/users（全表）
+ */
+async function fetchUsers() {
+  errorMsg.value = "";
+  isLoading.value = true;
+
+  try {
+    // ✅ 推薦：有 proxy 就用 "/api/users"
+    // 沒 proxy：API_BASE = "http://127.0.0.1:5000"
+    const res = await fetch(`${API_BASE}/api/users`, {
+      method: "GET",
+      headers: { "Accept": "application/json" },
+    });
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const raw = await res.json();
+    if (!Array.isArray(raw)) {
+      throw new Error("API 回傳格式不是陣列（Array）");
+    }
+
+    const normalized = raw.map(normalizeUserRow).filter((u) => u.id);
+    students.value = normalized;
+
+    // 若目前選取的 id 不存在了，清掉
+    if (selectedId.value && !students.value.some((s) => s.id === selectedId.value)) {
+      selectedId.value = "";
+    }
+  } catch (e) {
+    errorMsg.value = `取得 users 失敗：${e?.message || "unknown error"}`;
+  } finally {
+    isLoading.value = false;
+  }
+}
+
+/**
+ * ✅ 顯示用資料源（先用前端 query 篩選）
+ * 之後後端支援查詢後，可改成打：GET /api/users?query=...
+ */
 const studentsView = computed(() => {
-  const q = query.value;
+  const q = query.value?.trim();
   if (!q) return students.value;
   return students.value.filter((s) => String(s.id).includes(q));
 });
@@ -151,47 +266,77 @@ function selectRow(id) {
   selectedId.value = id;
 }
 
-/** ✅ 查詢（之後改成 API：GET /students?query=...） */
+async function refresh() {
+  await fetchUsers();
+}
+
+/**
+ * ✅ 查詢（目前：前端篩選；之後：改後端查詢）
+ */
 async function onSearch() {
   errorMsg.value = "";
-  isLoading.value = true;
 
-  try {
-    // demo：目前用 computed 篩選就好
-    // 之後你可以在這裡呼叫 API，把 students.value 換成回傳資料
-  } catch (e) {
-    errorMsg.value = "查詢失敗，請稍後再試。";
-  } finally {
-    isLoading.value = false;
-  }
+  // ✅ 目前後端沒有 query 參數，所以不必額外打 API
+  // 你按查詢只是觸發 computed 更新（UI 會自己變）
+  // 但保留 hook，方便你之後改成「打查詢 API」
+
+  // 🧠 TODO（後端補上後改這裡）：
+  // - GET /api/users?query=1001
+  // - 回來後 students.value = 回傳資料
 }
 
-/** ✅ 新增（之後改成打開新增表單 modal → POST /students） */
+/**
+ * ✅ 新增（目前後端無 POST）
+ */
 function onCreate() {
   errorMsg.value = "";
-  // demo：先提示，之後接你的新增彈窗/頁面
-  alert("TODO：新增（之後接 API / 表單）");
+  alert("TODO：新增（後端需要提供 POST /api/users 或 /api/admin/users）");
 }
 
-/** ✅ 修改（需要 selectedId，之後打開編輯 modal → PUT /students/:id） */
+/**
+ * ✅ 修改（目前後端無 PUT）
+ */
 function onEdit() {
   errorMsg.value = "";
   if (!selectedId.value) return;
-  alert(`TODO：修改學號 ${selectedId.value}（之後接 API / 表單）`);
+  alert(`TODO：修改學號 ${selectedId.value}（後端需要提供 PUT /api/users/${selectedId.value}）`);
 }
 
-/** ✅ 刪除（需要 selectedId，之後接你剛做的 Confirm Popup → DELETE /students/:id） */
-function onDelete() {
+/**
+ * ✅ 刪除
+ * - 目前後端無 DELETE，所以先做「UI 操作」提示
+ * - 之後後端補 DELETE，再把 TODO 區塊打開即可
+ */
+async function onDelete() {
   errorMsg.value = "";
   if (!selectedId.value) return;
 
-  // demo：先用 confirm，之後換成你那個 Persona Confirm Modal
   const ok = confirm(`確認刪除學號 ${selectedId.value}？`);
   if (!ok) return;
 
+  // ✅ 目前後端沒有 DELETE，所以先不真的刪 DB，只做提示
+  // 你也可以先做本地刪除（假動作），讓 UI 看起來像刪了：
   students.value = students.value.filter((s) => s.id !== selectedId.value);
   selectedId.value = "";
+
+  // 🧠 TODO（後端補上後打開）：
+  // try {
+  //   isLoading.value = true;
+  //   const res = await fetch(`${API_BASE}/api/users/${encodeURIComponent(selectedId.value)}`, {
+  //     method: "DELETE",
+  //   });
+  //   if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  //   await fetchUsers(); // 刪完重新拉
+  // } catch (e) {
+  //   errorMsg.value = `刪除失敗：${e?.message || "unknown error"}`;
+  // } finally {
+  //   isLoading.value = false;
+  // }
 }
+
+onMounted(async () => {
+  await fetchUsers();
+});
 </script>
 
 <style scoped>
@@ -223,7 +368,7 @@ function onDelete() {
 }
 .p3-row-right{
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr auto auto;
   gap: 10px;
   align-items: center;
 }
@@ -280,14 +425,14 @@ function onDelete() {
 
 .p3-table-scroll{
   width: 100%;
-  overflow: auto;            /* ✅ 讓表格自己滾動，避免整頁 overflow */
+  overflow: auto;
   border-radius: 14px;
   border: 1px solid rgba(255,255,255,0.08);
 }
 
 .p3-table{
   width: 100%;
-  min-width: 980px;          /* ✅ 欄位多：桌機維持完整，手機用 scroll */
+  min-width: 980px;
   border-collapse: collapse;
   font-size: 14px;
 }
@@ -330,5 +475,20 @@ function onDelete() {
 .empty{
   padding: 18px;
   color: rgba(180, 200, 230, 0.8);
+}
+
+.p3-alert{
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: rgba(255, 76, 76, 0.12);
+  border: 1px solid rgba(255, 76, 76, 0.22);
+  color: rgba(255, 210, 210, 0.95);
+  font-weight: 700;
+}
+
+.p3-hint{
+  margin-top: 12px;
+  font-size: 12px;
+  color: rgba(180, 200, 230, 0.75);
 }
 </style>
