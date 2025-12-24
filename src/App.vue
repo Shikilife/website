@@ -117,7 +117,7 @@ function closeAuth() {
   showAuthModal.value = false;
 }
 
-/** ✅ 點外面自動關閉 UserMenu（更正式更像真的產品） */
+/** ✅ 點外面自動關閉 UserMenu */
 function onDocClick(e) {
   if (!userMenuOpen.value) return;
 
@@ -129,31 +129,23 @@ function onDocClick(e) {
 }
 
 /**
- * ✅ App 啟動時嘗試恢復登入狀態
- * - 如果 user store 有 restoreSession / fetchMe / fetchProfile 就會自動呼叫
- * - 沒有也不會壞（只是不會持久登入）
+ * ✅ DEMO：只做 localStorage 還原
+ * - 不打 /me
+ * - 不處理 token
  */
 async function bootAuth() {
   try {
     if (typeof user.restoreSession === "function") {
-      // 建議：從 localStorage token 取回，並打 /me 驗證
       await user.restoreSession();
-    } else if (typeof user.fetchMe === "function") {
-      // 建議：直接打 /me 取得登入資訊
-      await user.fetchMe();
-    } else if (user.isLoggedIn && typeof user.fetchProfile === "function") {
-      await user.fetchProfile();
     }
-  } catch (err) {
-    // ✅ 若 token 過期或驗證失敗：建議清掉登入狀態，避免 UI 卡住
+  } catch {
+    // 若 localStorage 壞掉就清乾淨
     if (typeof user.logout === "function") user.logout();
   }
 }
 
 onMounted(async () => {
   document.addEventListener("click", onDocClick);
-
-  // ✅ 進站時嘗試恢復登入狀態
   await bootAuth();
 });
 
@@ -164,7 +156,7 @@ onBeforeUnmount(() => {
 watch(
   () => user.isLoggedIn,
   (ok) => {
-    if (ok) userMenuOpen.value = false; // ✅ 登入成功就關掉選單
+    if (ok) userMenuOpen.value = false;
   }
 );
 
@@ -176,9 +168,7 @@ const particlesInit = async (engine) => {
 // Persona 粒子設定
 const particlesOptions = {
   fullScreen: { enable: false },
-  background: {
-    color: { value: "transparent" },
-  },
+  background: { color: { value: "transparent" } },
   fpsLimit: 60,
   interactivity: {
     events: {
@@ -208,10 +198,7 @@ const particlesOptions = {
       speed: 0.8,
       straight: false,
     },
-    number: {
-      density: { enable: true, area: 800 },
-      value: 60,
-    },
+    number: { density: { enable: true, area: 800 }, value: 60 },
     opacity: { value: 0.3 },
     shape: { type: "circle" },
     size: { value: { min: 1, max: 3 } },
@@ -225,7 +212,7 @@ const particlesOptions = {
   z-index: 9999 !important;
 }
 
-/* 變數定義 (如果你的 persona.css 已經有，可以不用重複寫) */
+/* 變數定義 */
 .p3-topbar {
   --neon-blue: #2fe6ff;
   --neon-purple: #7c5cff;
@@ -262,17 +249,9 @@ const particlesOptions = {
 }
 
 @keyframes borderFlow {
-  0% {
-    background-position: 0% 50%;
-    opacity: 0.6;
-  }
-  50% {
-    opacity: 1;
-  }
-  100% {
-    background-position: 100% 50%;
-    opacity: 0.6;
-  }
+  0% { background-position: 0% 50%; opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { background-position: 100% 50%; opacity: 0.6; }
 }
 
 .p3-topbar-glass {
@@ -375,12 +354,7 @@ const particlesOptions = {
   left: -100%;
   width: 50%;
   height: 100%;
-  background: linear-gradient(
-    90deg,
-    transparent,
-    rgba(255, 255, 255, 0.8),
-    transparent
-  );
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.8), transparent);
   transform: skewX(15deg);
   transition: none;
 }
@@ -390,12 +364,8 @@ const particlesOptions = {
 }
 
 @keyframes shineMove {
-  0% {
-    left: -100%;
-  }
-  100% {
-    left: 200%;
-  }
+  0% { left: -100%; }
+  100% { left: 200%; }
 }
 
 /* 已登入按鈕 */
@@ -428,7 +398,7 @@ const particlesOptions = {
   opacity: 0.7;
 }
 
-/* ✅ Route Transition（Persona-ish） */
+/* ✅ Route Transition */
 .p3-route-enter-active,
 .p3-route-leave-active {
   transition:
@@ -438,7 +408,6 @@ const particlesOptions = {
   will-change: opacity, transform, filter;
 }
 
-/* 進場：右滑入 + 微斜切 + 模糊 */
 .p3-route-enter-from {
   opacity: 0;
   transform: translateX(34px) skewX(-3deg);
@@ -451,7 +420,6 @@ const particlesOptions = {
   filter: blur(0);
 }
 
-/* 離場：左滑出 + 微斜切 + 模糊 */
 .p3-route-leave-from {
   opacity: 1;
   transform: translateX(0) skewX(0deg);
@@ -464,13 +432,11 @@ const particlesOptions = {
   filter: blur(6px);
 }
 
-/* ✅ 包住頁面：避免 transform 造成水平 overflow */
 .p3-page-shell {
   width: 100%;
-  overflow-x: clip; /* 若不支援可改 hidden */
+  overflow-x: clip;
 }
 
-/* ✅ reduced-motion：更穩、更專業 */
 @media (prefers-reduced-motion: reduce) {
   .p3-route-enter-active,
   .p3-route-leave-active {

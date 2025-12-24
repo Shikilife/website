@@ -63,7 +63,7 @@
         <input
           v-model.trim="username"
           class="p3-input"
-          :placeholder="step === 'student' ? '例如：122214217' : '例如：admin'"
+          :placeholder="step === 'student' ? '請輸入帳號' : '請輸入帳號'"
           @keyup.enter="handleLogin"
           :disabled="isLoading"
         />
@@ -96,15 +96,11 @@
 <script setup>
 import { ref } from "vue";
 import { useRouter } from "vue-router";
-import { mockLogin } from "@/data/accounts";
 import { useUserStore } from "@/stores/user";
 
 const emit = defineEmits(["close"]);
 const router = useRouter();
 const user = useUserStore();
-
-// ✅ 開關：現在先用假登入；後端完成後改成 false
-const USE_MOCK_LOGIN = true;
 
 const step = ref("select"); // 'select' | 'student' | 'admin'
 const username = ref("");
@@ -119,11 +115,6 @@ function resetFields() {
   isLoading.value = false;
 }
 
-/**
- * ✅ 修法 A：close(force)
- * - 使用者點 X / 點背景：close() → 如果 isLoading 就不給關
- * - 登入成功：close(true) → 強制關閉，不受 isLoading 限制
- */
 function close(force = false) {
   if (isLoading.value && !force) return;
   resetFields();
@@ -140,13 +131,7 @@ function back() {
   go("select");
 }
 
-/**
- * ✅ 統一登入入口：先 mock，後端完成再切回 API
- * 後端建議規格（你可轉告後端）：
- * POST /api/auth/login
- * body: { username, password, role: 'student'|'admin' }
- * resp: { ok: true, token, user: { id, username, name, isAdmin, ... } }
- */
+// AuthModal.vue (script setup)
 async function handleLogin() {
   errorMsg.value = "";
 
@@ -163,89 +148,21 @@ async function handleLogin() {
   isLoading.value = true;
 
   try {
-    let data = null;
+    // ✅ 這行是關鍵：把 step.value 當 role 傳進去
+    const u = await user.login(username.value, password.value, step.value);
 
-    // =========================
-    // ✅ 1) Mock Login（現在可用）
-    // =========================
-    if (USE_MOCK_LOGIN) {
-      data = await mockLogin({
-        username: username.value,
-        password: password.value,
-        role: step.value,
-      });
-    } else {
-      // =========================
-      // ✅ 2) Real API（後端完成再開）
-      // =========================
-      const res = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({
-          username: username.value,
-          password: password.value,
-          role: step.value,
-        }),
-      });
+    close(true);
 
-      try {
-        data = await res.json();
-      } catch {
-        data = null;
-      }
-
-      if (!res.ok) {
-        const msg =
-          data?.message ||
-          (res.status === 401 ? "帳號或密碼錯誤" : "登入失敗，請稍後再試");
-        errorMsg.value = msg;
-        return;
-      }
-    }
-
-    // =========================
-    // ✅ 共用：資料檢查 + 寫入 Store
-    // =========================
-    if (!data || data.ok === false) {
-      errorMsg.value = data?.message || "帳號或密碼錯誤";
-      return;
-    }
-
-    const token = data?.token || "";
-    const u = data?.user || null;
-
-    if (!u) {
-      errorMsg.value = "登入成功但缺少 user 資料（請修正回傳格式）";
-      return;
-    }
-
-    // ✅ token：mock/真API都可以留著（真實 JWT 時會用到）
-    if (token) localStorage.setItem("auth_token", token);
-    else localStorage.removeItem("auth_token");
-
-    // ✅ 寫入 Pinia（有 setSession 就用）
-    if (typeof user.setSession === "function") {
-      user.setSession({ token, user: u });
-    } else {
-      user.isLoggedIn = true;
-      user.isAdmin = !!u.isAdmin;
-      user.username = u.name || u.username || String(u.id || username.value);
-      if ("profile" in user) user.profile = u;
-    }
-
-    // ✅ 關閉 modal + 導頁
-    close(true); // ✅ 強制關閉（不受 isLoading 阻擋）
-    if (u.isAdmin) router.push("/admin");
+    // ✅ 依照登入結果導頁
+    if (user.isAdmin) router.push("/admin");
     else router.push("/courses");
   } catch (e) {
-    errorMsg.value = USE_MOCK_LOGIN
-      ? "假登入發生錯誤（請檢查 mockLogin 實作）"
-      : "登入連線失敗（請確認後端 API 是否啟動 / 代理設定）";
+    errorMsg.value = e?.message || "登入失敗";
   } finally {
     isLoading.value = false;
   }
 }
+
 </script>
 
 <style scoped>

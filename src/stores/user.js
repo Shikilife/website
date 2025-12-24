@@ -1,301 +1,161 @@
 // src/stores/user.js
 import { defineStore } from "pinia";
-import { apiGet } from "@/api";
-import { accounts } from "@/data/accounts"; // ✅ 先用 mock，後端上線可移除
+import { apiGet, apiPost, apiDelete } from "@/api.js";
 
-// ✅ 現在先用假登入；後端上線後改 false
-const USE_MOCK_AUTH = true;
-
-/**
- * User Store（正式版）
- * - 管理登入狀態
- * - 管理 token
- * - 提供 profile 給 Profile.vue 使用
- */
 export const useUserStore = defineStore("user", {
   state: () => ({
-    // === 登入狀態 ===
     isLoggedIn: false,
     isAdmin: false,
-    username: "",
+    userID: "",
 
-    // === Token（JWT 或 session key）===
-    token: localStorage.getItem("auth_token") || "",
+    // ✅ 用 Set 來判斷是否已收藏/預選
+    favoriteIds: new Set(),
+    preselectIds: new Set(),
 
-    // === 個人資料（Profile.vue 會用）===
-    profile: null,
-    profileLoading: false,
-    profileError: "",
-    favorites: [], // 收藏課程（存整個 viewCourse 物件）
-    preselects: [], // 預選課程（存整個 viewCourse 物件）
+    // ✅ 給畫面用：課程明細（由 courseMap join）
+    favorites: [],
+    preselects: [],
+
+    // ✅ 快取所有課程（用來 join courseID -> course object）
+    courseMap: new Map(),
+    _coursesLoaded: false,
   }),
 
   actions: {
-    /**
-     * ✅ 登入成功後，統一由這裡寫入狀態
-     * AuthModal.vue 會呼叫這個
-     */
-    setSession({ token, user }) {
-      // token
-      if (token) {
-        this.token = token;
-        localStorage.setItem("auth_token", token);
-      } else {
-        this.token = "";
-        localStorage.removeItem("auth_token");
-      }
-
-      // status
-      this.isLoggedIn = true;
-      this.isAdmin = !!user.isAdmin;
-
-      // App.vue 顯示 user.username，所以這裡用「顯示名稱」最合理
-      // 也可改成 user.username（學號）看你 UI 想顯示哪個
-      this.username = (user.name || user.username || user.id || "").toString();
-
-      // profile（統一格式，Profile.vue 直接吃）
-      this.profile = {
-        id: (
-          user.id ||
-          user.studentID ||
-          user.userID ||
-          user.username ||
-          ""
-        ).toString(),
-        name: (user.name || user.username || "").toString(),
-        gender: user.gender || "",
-        className: user.className || user.class || "",
-        phone: user.phone || "",
-        address: user.address || "",
-        email: user.email || user.mail || "",
-      };
-
-      this.loadCollections();
+    // --- 登入成功後呼叫 ---
+    async afterLoginBootstrap() {
+      await Promise.all([
+        this.ensureCoursesLoaded(),
+        this.loadFavoritesFromDB(),
+        this.loadPreselectsFromDB(),
+      ]);
+      this.rebuildDetailLists();
     },
 
-    /**
-     * ✅ App.vue 啟動時呼叫
-     * 用 token 向後端確認「我還是不是登入狀態」
-     * - 現在：支援 mock（從 accounts 找）
-     * - 未來：GET /api/me
-     */
-    async restoreSession() {
-      if (!this.token) return;
-
-      // ======================
-      // ✅ Mock 模式（現在可用）
-      // ======================
-      if (USE_MOCK_AUTH) {
-        // mock token 格式：mock_<id>_<timestamp>
-        const m = String(this.token).match(/^mock_(\d+)_/);
-        if (!m) {
-          this.logout();
-          return;
-        }
-        this.loadCollections();
-
-        const id = Number(m[1]);
-        const acc = accounts.find((a) => a.id === id);
-
-        if (!acc) {
-          this.logout();
-          return;
-        }
-
-        const isAdmin = acc.role === "管理員";
-
-        this.isLoggedIn = true;
-        this.isAdmin = isAdmin;
-        this.username = acc.name || acc.username;
-
-        this.profile = {
-          id: acc.username, // 學號 / 帳號
-          name: acc.name || acc.username,
-          gender: "",
-          className: "",
-          phone: "",
-          address: "",
-          email: "",
-        };
-
-        return;
+    async ensureCoursesLoaded() {
+      if (this._coursesLoaded) return;
+      const courses = await apiGet("/courses");
+      const map = new Map();
+      for (const c of courses || []) {
+        const id = String(c.courseID ?? "").trim();
+        if (id) map.set(id, c);
       }
-
-      // ======================
-      // ✅ 正式模式（後端上線）
-      // ======================
-      try {
-        /**
-         * 🔴 後端必須提供：
-         * GET /api/me
-         * Header: Authorization: Bearer <token>
-         *
-         * ✅ 回傳建議：
-         * { id, username, name, isAdmin, gender, className, phone, address, email }
-         */
-        const data = await apiGet("/api/me");
-
-        this.isLoggedIn = true;
-        this.isAdmin = !!data.isAdmin;
-
-        // 顯示名稱
-        this.username = (
-          data.name ||
-          data.username ||
-          data.id ||
-          ""
-        ).toString();
-
-        this.profile = {
-          id: (data.id || data.username || "").toString(),
-          name: (data.name || data.username || "").toString(),
-          gender: data.gender || "",
-          className: data.className || "",
-          phone: data.phone || "",
-          address: data.address || "",
-          email: data.email || "",
-        };
-        this.loadCollections();
-      } catch (e) {
-        // token 失效 → 強制登出
-        this.logout();
-      }
+      this.courseMap = map;
+      this._coursesLoaded = true;
     },
 
-    /**
-     * ✅ Profile.vue 會用
-     * 若 restoreSession 已經抓過，這裡不會重打
-     */
-    async fetchProfile() {
-      if (this.profile) return;
-
-      this.profileLoading = true;
-      this.profileError = "";
-
-      // Mock：直接用現有資料即可（沒有就回錯）
-      if (USE_MOCK_AUTH) {
-        this.profileError =
-          "（Mock）目前沒有更多個人資料欄位，需後端 /api/me 補齊";
-        this.profileLoading = false;
-        return;
-      }
-
-      try {
-        /**
-         * 🔴 後端必須提供：
-         * GET /api/me
-         */
-        const data = await apiGet("/api/me");
-
-        this.profile = {
-          id: (data.id || data.username || "").toString(),
-          name: (data.name || data.username || "").toString(),
-          gender: data.gender || "",
-          className: data.className || "",
-          phone: data.phone || "",
-          address: data.address || "",
-          email: data.email || "",
-        };
-      } catch (e) {
-        this.profileError = e?.message || "個人資料讀取失敗";
-      } finally {
-        this.profileLoading = false;
-      }
-    },
-    // ======================
-    // ✅ 收藏 / 預選（LocalStorage）
-    // ======================
-    _key(prefix) {
-      // 用 profile.id 最穩（學生用學號、管理者也有 id）
-      const uid = this.profile?.id || this.username || "guest";
-      return `${prefix}_${uid}`;
-    },
-
-    loadCollections() {
-      try {
-        const fav = JSON.parse(localStorage.getItem(this._key("fav")) || "[]");
-        const pre = JSON.parse(localStorage.getItem(this._key("pre")) || "[]");
-        this.favorites = Array.isArray(fav) ? fav : [];
-        this.preselects = Array.isArray(pre) ? pre : [];
-      } catch {
-        this.favorites = [];
-        this.preselects = [];
-      }
-    },
-
-    _saveCollections() {
-      localStorage.setItem(
-        this._key("fav"),
-        JSON.stringify(this.favorites || [])
+    // --- DB -> store ---
+    async loadFavoritesFromDB() {
+      if (!this.isLoggedIn || !this.userID) return;
+      const rows = await apiGet("/userFavorites"); // 會回整張表
+      const ids = new Set(
+        (rows || [])
+          .filter((r) => String(r.userID) === String(this.userID))
+          .map((r) => String(r.courseID))
       );
-      localStorage.setItem(
-        this._key("pre"),
-        JSON.stringify(this.preselects || [])
-      );
+      this.favoriteIds = ids;
     },
 
+    async loadPreselectsFromDB() {
+      if (!this.isLoggedIn || !this.userID) return;
+      const rows = await apiGet("/userPreSelects");
+      const ids = new Set(
+        (rows || [])
+          .filter((r) => String(r.userID) === String(this.userID))
+          .map((r) => String(r.courseID))
+      );
+      this.preselectIds = ids;
+    },
+
+    rebuildDetailLists() {
+      // 把 ids -> 課程明細（你 CourseTable / Favorite 頁面要顯示用）
+      const fav = [];
+      for (const id of this.favoriteIds) {
+        const raw = this.courseMap.get(String(id));
+        if (raw) fav.push(raw);
+      }
+      const pre = [];
+      for (const id of this.preselectIds) {
+        const raw = this.courseMap.get(String(id));
+        if (raw) pre.push(raw);
+      }
+      this.favorites = fav;
+      this.preselects = pre;
+    },
+
+    // --- getter like ---
     isFavorite(courseID) {
-      const id = String(courseID ?? "");
-      return (this.favorites || []).some((c) => String(c.courseID) === id);
+      return this.favoriteIds.has(String(courseID));
     },
-
     isPreselected(courseID) {
-      const id = String(courseID ?? "");
-      return (this.preselects || []).some((c) => String(c.courseID) === id);
+      return this.preselectIds.has(String(courseID));
     },
 
-    toggleFavorite(course) {
-      if (!course?.courseID) return;
-      const id = String(course.courseID);
+    // --- toggle: UI 點按 -> DB ---
+    async toggleFavorite(courseOrId) {
+      if (!this.isLoggedIn || this.isAdmin) return;
 
-      const idx = (this.favorites || []).findIndex(
-        (c) => String(c.courseID) === id
-      );
-      if (idx >= 0) this.favorites.splice(idx, 1);
-      else this.favorites.push(course);
+      const courseID = String(courseOrId?.courseID ?? courseOrId);
+      if (!courseID) return;
 
-      this._saveCollections();
-    },
-
-    togglePreselect(course) {
-      if (!course?.courseID) return;
-      const id = String(course.courseID);
-
-      const idx = (this.preselects || []).findIndex(
-        (c) => String(c.courseID) === id
-      );
-      if (idx >= 0) this.preselects.splice(idx, 1);
-      else this.preselects.push(course);
-
-      this._saveCollections();
-    },
-
-    /**
-     * ✅ 登出
-     */
-    async logout() {
+      const exists = this.favoriteIds.has(courseID);
       try {
-        /**
-         * （可選）
-         * 後端如果有 session，可以做：
-         * POST /api/auth/logout
-         */
-        // await fetch("/api/auth/logout", { method: "POST" });
+        if (!exists) {
+          await apiPost("/userFavorites", { userID: this.userID, courseID });
+          this.favoriteIds.add(courseID);
+        } else {
+          await apiDelete("/userFavorites", { userID: this.userID, courseID });
+          this.favoriteIds.delete(courseID);
+        }
+        this.rebuildDetailLists();
       } catch (e) {
-        // ignore
+        // 409 已存在通常是重複點太快，直接重新 sync
+        await this.loadFavoritesFromDB();
+        this.rebuildDetailLists();
+        throw e;
       }
+    },
 
-      this.isLoggedIn = false;
-      this.isAdmin = false;
-      this.username = "";
-      this.profile = null;
-      this.token = "";
-      this.profileLoading = false;
-      this.profileError = "";
+    async togglePreselect(courseOrId) {
+      if (!this.isLoggedIn || this.isAdmin) return;
 
-      localStorage.removeItem("auth_token");
-      this.favorites = [];
-      this.preselects = [];
+      const courseID = String(courseOrId?.courseID ?? courseOrId);
+      if (!courseID) return;
+
+      const exists = this.preselectIds.has(courseID);
+      try {
+        if (!exists) {
+          await apiPost("/userPreSelects", { userID: this.userID, courseID });
+          this.preselectIds.add(courseID);
+        } else {
+          await apiDelete("/userPreSelects", { userID: this.userID, courseID });
+          this.preselectIds.delete(courseID);
+        }
+        this.rebuildDetailLists();
+      } catch (e) {
+        await this.loadPreselectsFromDB();
+        this.rebuildDetailLists();
+        throw e;
+      }
+    },
+
+    // --- 刪除全部收藏（後端沒提供 bulk delete，所以前端逐筆刪） ---
+    async deleteAllFavorites() {
+      const ids = Array.from(this.favoriteIds);
+      await Promise.all(
+        ids.map((courseID) => apiDelete("/userFavorites", { userID: this.userID, courseID }))
+      );
+      this.favoriteIds = new Set();
+      this.rebuildDetailLists();
+    },
+
+    async deleteAllPreselects() {
+      const ids = Array.from(this.preselectIds);
+      await Promise.all(
+        ids.map((courseID) => apiDelete("/userPreSelects", { userID: this.userID, courseID }))
+      );
+      this.preselectIds = new Set();
+      this.rebuildDetailLists();
     },
   },
 });

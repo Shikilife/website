@@ -6,7 +6,7 @@
         <div class="ct-head-left">
           <h1 class="ct-title">我的課表</h1>
           <p class="ct-sub">
-            顯示「預選課程」排入課表（僅顯示課程名稱與教室）。
+            顯示「預選課程」排入課表（僅顯示課程名稱與教室）。點擊課程可查看完整資訊並刪除。
           </p>
         </div>
 
@@ -54,7 +54,15 @@
                   v-for="course in getCoursesAt(dayIndex, rowIndex)"
                   :key="course._slotId"
                 >
-                  <div class="ct-course" :style="courseStyle(course)" :title="courseTitle(course)">
+                  <div
+                    class="ct-course"
+                    :style="courseStyle(course)"
+                    :title="courseTitle(course)"
+                    role="button"
+                    tabindex="0"
+                    @click.stop="openCourse(course)"
+                    @keydown.enter.stop="openCourse(course)"
+                  >
                     <div class="ct-course-name">{{ course.name }}</div>
                     <div class="ct-course-room">{{ course.room }}</div>
                   </div>
@@ -72,24 +80,78 @@
         </button>
       </div>
     </section>
+
+    <!-- ✅ 詳細資訊 Modal -->
+    <div v-if="modalOpen" class="ct-modal-mask" @click.self="closeModal">
+      <div class="ct-modal-card">
+        <div class="ct-modal-head">
+          <div class="ct-modal-title">
+            <div class="ct-modal-name">{{ selected?.name }}</div>
+            <div class="ct-modal-sub">
+              {{ dayLabel(selected?.day) }}｜節次：{{ selected?.slotStr || "—" }}｜教室：{{ selected?.room || "—" }}
+            </div>
+          </div>
+
+          <button class="ct-x" @click="closeModal" aria-label="close">✕</button>
+        </div>
+
+        <div class="ct-modal-body">
+          <div class="ct-kv">
+            <div class="k">課程 ID</div>
+            <div class="v">{{ selected?.raw?.courseID ?? "—" }}</div>
+          </div>
+          <div class="ct-kv">
+            <div class="k">系所</div>
+            <div class="v">{{ selected?.raw?.departmentID ?? "—" }}</div>
+          </div>
+          <div class="ct-kv">
+            <div class="k">年級</div>
+            <div class="v">{{ selected?.raw?.grade ?? "—" }}</div>
+          </div>
+          <div class="ct-kv">
+            <div class="k">備註</div>
+            <div class="v">{{ selected?.raw?.courseNote ?? "—" }}</div>
+          </div>
+
+          <div class="ct-desc">
+            <div class="ct-desc-title">課程介紹</div>
+            <div class="ct-desc-text">
+              {{ selected?.raw?.courseIntroduction || selected?.raw?.courseENIntroduction || "—" }}
+            </div>
+          </div>
+        </div>
+
+        <div class="ct-modal-actions">
+          <button class="ct-btn ct-btn-danger" @click="deleteSelected" :disabled="deleting">
+            {{ deleting ? "刪除中…" : "刪除預選" }}
+          </button>
+          <button class="ct-btn" @click="closeModal">關閉</button>
+        </div>
+      </div>
+    </div>
   </main>
 </template>
 
 <script setup>
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useUserStore } from "@/stores/user";
 
 const router = useRouter();
 const user = useUserStore();
 
-onMounted(() => {
-  // ✅ 進課表就同步載入預選（避免刷新後空）
-  if (user.isLoggedIn) user.loadCollections?.();
+onMounted(async () => {
+  if (user.isLoggedIn) {
+    // ✅ 如果這裡有打 API 抓預選，才算「真的」
+    if (typeof user.afterLoginBootstrap === "function") {
+      await user.afterLoginBootstrap();
+    }
+  }
 });
 
 const weekdays = ["星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日"];
 
+// ✅ 到第 15 節（時間你可自行依校方節次表調整）
 const periods = [
   { name: "一", time: "08:10~09:00" },
   { name: "二", time: "09:10~10:00" },
@@ -100,25 +162,18 @@ const periods = [
   { name: "七", time: "14:40~15:30" },
   { name: "八", time: "15:40~16:30" },
   { name: "九", time: "16:40~17:30" },
+  { name: "十", time: "17:40~18:30" },
+  { name: "十一", time: "18:40~19:30" },
+  { name: "十二", time: "19:40~20:30" },
+  { name: "十三", time: "20:40~21:30" },
+  { name: "十四", time: "21:40~22:30" },
+  { name: "十五", time: "22:40~23:30" },
 ];
 
-function safeStr(v) {
-  return v == null ? "" : String(v);
-}
-
-/**
- * ✅ 關鍵：只吃「明確欄位」(day/start/span)
- * 不再從字串猜，避免 span 爆掉造成跑版
- *
- * 你可以在加入預選時，把課程轉成：
- * { day: 1~7, start: 0~8, span?: 1~4, name, room, ... }
- */
 function parseTimesSlotToStartSpan(timesSlot) {
-  // timesSlot 可能是: "6,7" / "1,2,3" / "6" / "" / null
   const s = String(timesSlot ?? "").trim();
   if (!s) return null;
 
-  // 取出所有數字節次
   const nums = s
     .split(/[,\s]+/g)
     .map((x) => Number(String(x).trim()))
@@ -127,61 +182,39 @@ function parseTimesSlotToStartSpan(timesSlot) {
   if (!nums.length) return null;
 
   nums.sort((a, b) => a - b);
-
-  // ✅ start: 用最小節次 - 1 -> 0-based rowIndex
   const start = nums[0] - 1;
 
-  // ✅ span: 節次數量（通常是連續的，像 6,7）
-  // 這裡不要用 max-min+1，避免 "1,3" 這種不連續變成跨兩格
   let span = nums.length;
+  span = Math.max(1, Math.min(6, Math.floor(span))); // ✅ 晚上課可能 3~4，小加寬到 6 防呆
 
-  // ✅ span 防呆：1~4（避免資料怪掉又變柱子）
-  span = Math.max(1, Math.min(4, Math.floor(span)));
-
-  return { start, span };
+  return { start, span, slotStr: nums.join(",") };
 }
 
 function dayToNumber(v) {
   const s = String(v ?? "").trim();
   if (!s) return null;
 
-  // 1~7
   if (/^[1-7]$/.test(s)) return Number(s);
 
-  // "一二三四五六日/天"
   const mapZh = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 日: 7, 天: 7 };
   if (mapZh[s] != null) return mapZh[s];
 
-  // "星期二"
   if (s.startsWith("星期")) {
     const c = s.replace("星期", "");
     if (mapZh[c] != null) return mapZh[c];
   }
-
   return null;
 }
 
 function normalizeToSlot(rawCourse, idx) {
-  // ✅ 關鍵：你 preselects 存的是 viewCourse（day/section/...）
-  // 但也可能帶 __raw（若你 toViewCourse 有塞 __raw）
   const c = rawCourse?.__raw ?? rawCourse;
 
   const name =
-    c.courseName ??
-    c.name ??
-    c.courseENName ??
-    c.title ??
-    rawCourse?.name ??
-    "未命名課程";
+    c.courseName ?? c.name ?? c.courseENName ?? c.title ?? rawCourse?.name ?? "未命名課程";
 
   const room =
-    c.classroom ??
-    c.room ??
-    c.location ??
-    rawCourse?.room ??
-    "—";
+    c.classroom ?? c.room ?? c.location ?? rawCourse?.room ?? "—";
 
-  // ✅ 先抓 DayOfWeek（API raw），抓不到就用 viewCourse.day（"二"）
   const day =
     dayToNumber(c.DayOfWeek) ??
     dayToNumber(c.day) ??
@@ -190,33 +223,27 @@ function normalizeToSlot(rawCourse, idx) {
   const okDay = typeof day === "number" && day >= 1 && day <= 7;
   if (!okDay) return null;
 
-  // ✅ timesSlot 在 API raw 叫 timesSlot
-  // ✅ viewCourse 叫 section
   const slotStr =
-    c.timesSlot ??
-    c.section ??
-    rawCourse?.section ??
-    rawCourse?.timesSlot;
+    c.timesSlot ?? c.section ?? rawCourse?.section ?? rawCourse?.timesSlot;
 
   const slot = parseTimesSlotToStartSpan(slotStr);
   if (!slot) return null;
 
-  const { start, span } = slot;
-
   const tones = ["cyan", "violet", "lime"];
-  const tone = c.tone || tones[(day + start) % tones.length];
+  const tone = c.tone || tones[(day + slot.start) % tones.length];
 
   return {
     _slotId: String(c.courseID ?? c.id ?? rawCourse?.courseID ?? idx),
     day,
-    start,
-    span,
+    start: slot.start,
+    span: slot.span,
+    slotStr: slot.slotStr,
     name,
     room,
     tone,
+    raw: c, // ✅ 保留 raw，modal 才能顯示完整資訊
   };
 }
-
 
 const rawPreselects = computed(() => user.preselects || []);
 
@@ -250,11 +277,57 @@ function courseStyle(course) {
     "--ct-accent": tone.a,
     "--ct-glow": tone.b,
     height: `calc(var(--ct-row-h) * ${course.span})`,
+    cursor: "pointer",
   };
 }
 
 function courseTitle(course) {
-  return `${course.name}\n教室：${course.room}`;
+  return `${course.name}\n教室：${course.room}\n節次：${course.slotStr || "—"}`;
+}
+
+function dayLabel(dayNum) {
+  if (!dayNum) return "—";
+  return weekdays[dayNum - 1] || "—";
+}
+
+// ✅ modal
+const modalOpen = ref(false);
+const selected = ref(null);
+const deleting = ref(false);
+
+function openCourse(course) {
+  selected.value = course;
+  modalOpen.value = true;
+}
+function closeModal() {
+  modalOpen.value = false;
+  selected.value = null;
+}
+
+async function deleteSelected() {
+  if (!selected.value) return;
+  deleting.value = true;
+
+  try {
+    const courseID = selected.value.raw?.courseID ?? selected.value._slotId;
+
+    // ✅ 如果 store 有「真的刪除預選（打 API）」就用
+    if (typeof user.removePreselect === "function") {
+      await user.removePreselect(courseID);
+    } else {
+      // 🟡 沒有 action 就先做「前端刪除」（代表你後端還沒接上）
+      const before = user.preselects || [];
+      user.preselects = before.filter((x) => {
+        const c = x?.__raw ?? x;
+        const id = c?.courseID ?? c?.id;
+        return String(id) !== String(courseID);
+      });
+    }
+
+    closeModal();
+  } finally {
+    deleting.value = false;
+  }
 }
 
 function goHome() {
@@ -263,6 +336,7 @@ function goHome() {
 </script>
 
 <style scoped>
+/* 你原本的樣式 그대로保留 */
 .ct-root{
   padding: clamp(16px, 2.4vw, 28px);
   width: 100%;
@@ -377,6 +451,13 @@ function goHome() {
 .ct-btn-ghost{
   border-color: rgba(148,123,255,0.25);
 }
+.ct-btn-danger{
+  border-color: rgba(255,120,120,0.35);
+  background: rgba(255,120,120,0.10);
+}
+.ct-btn-danger:hover{
+  background: rgba(255,120,120,0.16);
+}
 
 /* table wrapper */
 .ct-table-wrap{
@@ -390,13 +471,13 @@ function goHome() {
 /* table */
 .ct-table{
   width: 100%;
-  min-width: 980px;          /* ✅ 不硬縮，避免你截圖那種擠爆 */
+  min-width: 980px;
   border-collapse: separate;
   border-spacing: 0;
   font-size: 13px;
 
-  --ct-row-h: 54px;          /* ✅ 統一格子高度 */
-  table-layout: fixed;       /* ✅ 欄寬固定 */
+  --ct-row-h: 54px;
+  table-layout: fixed;
 }
 
 .ct-table thead th{
@@ -453,7 +534,7 @@ function goHome() {
   overflow: visible;
 }
 
-/* ✅ 精簡卡片（只顯示 名稱 + 教室） */
+/* card */
 .ct-course{
   position: absolute;
   left: 10px;
@@ -473,6 +554,10 @@ function goHome() {
 
   overflow: hidden;
   z-index: 4;
+}
+.ct-course:hover{
+  transform: translateY(-1px);
+  filter: brightness(1.05);
 }
 
 .ct-course::before{
@@ -509,9 +594,103 @@ function goHome() {
   margin-top: 14px;
   display:none;
 }
-
 @media (max-width: 768px){
   .ct-head-actions{ display:none; }
   .ct-bottom{ display:block; }
+}
+
+/* ✅ modal */
+.ct-modal-mask{
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px;
+  z-index: 50;
+}
+.ct-modal-card{
+  width: min(720px, 96vw);
+  border-radius: 18px;
+  background: rgba(20, 34, 56, 0.92);
+  border: 1px solid rgba(47,230,255,0.18);
+  box-shadow: 0 18px 70px rgba(0,0,0,0.45);
+  overflow: hidden;
+}
+.ct-modal-head{
+  display:flex;
+  justify-content: space-between;
+  align-items:flex-start;
+  gap: 12px;
+  padding: 16px 16px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.ct-modal-name{
+  font-size: 18px;
+  font-weight: 950;
+  color: rgba(234,242,255,0.96);
+}
+.ct-modal-sub{
+  margin-top: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: rgba(200,220,255,0.78);
+}
+.ct-x{
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(255,255,255,0.06);
+  color: rgba(234,242,255,0.9);
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.ct-modal-body{
+  padding: 14px 16px 6px;
+}
+.ct-kv{
+  display:grid;
+  grid-template-columns: 90px 1fr;
+  gap: 10px;
+  padding: 8px 0;
+  border-bottom: 1px dashed rgba(255,255,255,0.10);
+}
+.ct-kv .k{
+  font-size: 12px;
+  font-weight: 900;
+  color: rgba(190,210,255,0.80);
+}
+.ct-kv .v{
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(234,242,255,0.92);
+  word-break: break-word;
+}
+.ct-desc{
+  margin-top: 12px;
+  padding: 12px;
+  border-radius: 14px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.10);
+}
+.ct-desc-title{
+  font-size: 12px;
+  font-weight: 950;
+  color: rgba(234,242,255,0.92);
+  margin-bottom: 8px;
+}
+.ct-desc-text{
+  font-size: 13px;
+  line-height: 1.7;
+  color: rgba(220,235,255,0.86);
+  white-space: pre-wrap;
+}
+.ct-modal-actions{
+  display:flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 12px 16px 16px;
 }
 </style>

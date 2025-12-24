@@ -89,20 +89,21 @@
 </template>
 
 <script setup>
-import { computed, onMounted } from "vue";
+import { computed, onMounted, ref } from "vue";
 import { storeToRefs } from "pinia";
 import { useRouter } from "vue-router";
 import { useUserStore } from "@/stores/user";
 
 const router = useRouter();
 const userStore = useUserStore();
+const API_BASE = import.meta?.env?.VITE_API_BASE_URL || "";
 
 /**
- * ✅ 這裡假設你的 store 有：
+ * ✅ store 假設有：
  * - isLoggedIn
  * - isAdmin
  * - username
- * - profile（可選，之後串 API 再補）
+ * - profile（可選）
  */
 const { username, isAdmin, isLoggedIn } = storeToRefs(userStore);
 
@@ -112,65 +113,114 @@ const profile = computed(() => userStore.profile || null);
 const roleText = computed(() => (isAdmin.value ? "管理者" : "學生"));
 const idLabel = computed(() => (isAdmin.value ? "編號" : "學號"));
 
+/* ✅ 班級清單：classID -> className */
+const classMap = ref({}); // { "1": "運國碩10", ... }
+
+function cleanText(v) {
+  return String(v ?? "").replace(/\r/g, "").trim();
+}
+
+async function fetchClasses() {
+  try {
+    const res = await fetch(`${API_BASE}/api/class`, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const raw = await res.json();
+    if (!Array.isArray(raw)) throw new Error("class API 回傳不是 Array");
+
+    const map = {};
+    for (const c of raw) {
+      const id = c?.classID;
+      const name = cleanText(c?.className);
+      if (id === null || id === undefined) continue;
+      map[String(id)] = name || String(id);
+    }
+    classMap.value = map;
+  } catch (e) {
+    // 不阻擋 Profile，只是班級顯示可能回退到 classID
+    console.warn("fetchClasses failed:", e?.message || e);
+    classMap.value = {};
+  }
+}
+
 /**
  * ✅ 顯示資料優先順序：
- * 1) store.profile.name / fullName
+ * 1) store.profile.name / fullName / displayName / username
  * 2) store.username
  * 3) "-"
  */
 const displayName = computed(() => {
   const p = profile.value || {};
   const n =
-    (p.name || p.fullName || p.displayName || "").toString().trim() ||
-    (username.value || "").toString().trim() ||
+    cleanText(p.name || p.fullName || p.displayName || p.username || "") ||
+    cleanText(username.value || "") ||
     "-";
   return n || "-";
 });
 
 const idValue = computed(() => {
   const p = profile.value || {};
-  // 管理者：可用 id / adminId；學生：可用 studentId / username
+  // ✅ 盡量抓 userID（你的 DB 是學號）
   const v = isAdmin.value
     ? p.id ?? p.adminId ?? p.userId
-    : p.studentId ?? p.id ?? username.value;
+    : p.userID ?? p.userId ?? p.studentId ?? p.id ?? username.value;
   return (v ?? "-").toString();
 });
 
 const genderText = computed(() => {
   const p = profile.value || {};
-  const g = (p.gender ?? "").toString().trim().toLowerCase();
+  const g = cleanText(p.gender ?? "").toLowerCase();
   if (!g) return "-";
   if (["m", "male", "男"].includes(g)) return "男";
   if (["f", "female", "女"].includes(g)) return "女";
   return p.gender || "-";
 });
 
+/**
+ * ✅ 班級顯示：
+ * 1) profile.className / class / gradeClass (如果後端直接給名稱)
+ * 2) profile.classID 去 classMap 找名稱
+ * 3) 找不到就顯示 classID
+ * 4) 都沒有就 "-"
+ */
 const classText = computed(() => {
   const p = profile.value || {};
-  return (p.className || p.class || p.gradeClass || "-").toString().trim() || "-";
+
+  const byName = cleanText(p.className || p.class || p.gradeClass || "");
+  if (byName) return byName;
+
+  const cid = p.classID ?? p.classId ?? p.class_id ?? null;
+  if (cid === null || cid === undefined || cid === "") return "-";
+
+  const key = String(cid);
+  const hit = classMap.value?.[key];
+  if (hit) return hit;
+
+  // fallback：至少顯示 classID
+  return `（${key}）`;
 });
 
 const phoneText = computed(() => {
   const p = profile.value || {};
-  return (p.phone || p.mobile || "-").toString().trim() || "-";
+  return cleanText(p.phone || p.mobile || "-") || "-";
 });
 
 const addressText = computed(() => {
   const p = profile.value || {};
-  return (p.address || "-").toString().trim() || "-";
+  return cleanText(p.address || "-") || "-";
 });
 
 const emailText = computed(() => {
   const p = profile.value || {};
-  return (p.email || p.mail || "-").toString().trim() || "-";
+  return cleanText(p.email || p.mail || "-") || "-";
 });
 
-/** ✅ Avatar：中文取第一字；英文取首字母（遇到空白會跳過） */
+/** ✅ Avatar：中文取第一字；英文取首字母 */
 const avatarText = computed(() => {
   const n = displayName.value;
   if (!n || n === "-") return "?";
-
-  // 去掉前後空白，抓第一個「不是空白」的字
   const first = n.replace(/\s+/g, " ").trim().slice(0, 1);
   if (!first) return "?";
   return first.toUpperCase();
@@ -186,11 +236,14 @@ function goCourses() {
 }
 
 /**
- * ✅ 保護：沒登入不給看 Profile（避免訪客直接輸入網址）
- * 如果你希望訪客也能看 Demo，就把這段拿掉
+ * ✅ 保護：沒登入不給看 Profile
  */
-onMounted(() => {
-  if (!isLoggedIn.value) router.replace("/courses");
+onMounted(async () => {
+  if (!isLoggedIn.value) {
+    router.replace("/courses");
+    return;
+  }
+  await fetchClasses();
 });
 </script>
 

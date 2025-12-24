@@ -4,23 +4,13 @@
     <div class="p3-search-row">
       <div class="p3-search-label">查詢課程</div>
 
-      <input
-        v-model.trim="searchText"
-        class="p3-input"
-        placeholder="請輸入課程名稱 / 系所 / 教師"
-        @keydown.enter="search"
-      />
+      <input v-model.trim="searchText" class="p3-input" placeholder="請輸入課程名稱 / 系所 / 教師 / 教室" @keydown.enter="search" />
 
       <button class="p3-btn p3-btn-primary" @click="search" :disabled="isLoading">
         搜尋
       </button>
 
-      <button
-        class="p3-btn p3-btn-ghost"
-        @click="refresh"
-        :disabled="isLoading"
-        title="重新抓取資料"
-      >
+      <button class="p3-btn p3-btn-ghost" @click="refresh" :disabled="isLoading" title="重新抓取資料">
         重新取得
       </button>
     </div>
@@ -38,12 +28,13 @@
     <!-- 📄 表格 -->
     <div class="p3-table-wrap">
       <table class="p3-table">
+        <!-- ✅ 正確標題列 -->
         <thead>
           <tr>
             <th>系所</th>
             <th>課程名稱</th>
-            <th>人數</th>
             <th>教師</th>
+            <th>教室</th>
             <th>課別</th>
             <th>學分</th>
             <th>星期</th>
@@ -53,17 +44,43 @@
           </tr>
         </thead>
 
+        <!-- ✅ 資料列 -->
         <tbody>
-          <!-- ✅ 只渲染「分頁後」資料 -->
           <tr v-for="c in coursesPage" :key="c.id">
             <td>{{ c.dept }}</td>
             <td class="strong">{{ c.name }}</td>
-            <td>{{ c.people }}</td>
             <td>{{ c.teacher }}</td>
+            <td class="room-cell">
+              <div class="room-wrap" @mouseenter="openRoomTip(c, false)" @mouseleave="closeRoomTipIfNotPinned">
+                <button type="button" class="room-btn" @click.stop="toggleRoomPinned(c)">
+                  <span class="room-code">{{ c.roomCode || "—" }}</span>
+                </button>
+
+                <transition name="p3-dd-fade">
+                  <div v-if="roomTipOpen && activeRoomId === c.id" class="room-tip" @click.stop>
+                    <div class="room-tip-head">
+                      <div class="room-tip-title">{{ c.buildingName || "—" }}</div>
+                      <div class="room-tip-sub">
+                        {{ c.roomCode || "" }}
+                        <span v-if="roomPinned" class="pin">（已固定）</span>
+                      </div>
+                    </div>
+
+                    <div v-if="c.roomImage" class="room-tip-img">
+                      <img :src="c.roomImage" alt="教室位置" />
+                    </div>
+                    <div v-else class="room-tip-empty">沒有位置圖片</div>
+                  </div>
+                </transition>
+              </div>
+            </td>
             <td>{{ c.category }}</td>
             <td>{{ c.credit }}</td>
             <td>{{ c.day }}</td>
             <td>{{ c.section }}</td>
+
+            <!-- ✅ 教室欄位：hover 顯示、click 固定 -->
+
 
             <td class="center action" @click="editCourse(c)">✎</td>
             <td class="center action danger" @click="deleteCourse(c)">⊖</td>
@@ -82,74 +99,63 @@
       </table>
     </div>
 
-<!-- ✅ 分頁區（只改這一塊 UI，不動其他區塊） -->
-<div class="p3-pagination-bar">
-  <div class="p3-pagination-left">
-    <label class="p3-pg-field">
-      <span class="p3-pg-label">每頁顯示</span>
+    <!-- ✅ 分頁區 -->
+    <div class="p3-pagination-bar">
+      <div class="p3-pagination-left">
+        <label class="p3-pg-field">
+          <span class="p3-pg-label">每頁顯示</span>
 
-      <select v-model.number="pageSize" class="p3-pg-select">
-        <option :value="10">10</option>
-        <option :value="20">20</option>
-        <option :value="30">30</option>
-        <option :value="50">50</option>
-      </select>
+          <select v-model.number="pageSize" class="p3-pg-select">
+            <option :value="10">10</option>
+            <option :value="20">20</option>
+            <option :value="30">30</option>
+            <option :value="50">50</option>
+          </select>
 
-      <span class="p3-pg-label">筆</span>
-    </label>
+          <span class="p3-pg-label">筆</span>
+        </label>
 
-    <div class="p3-pg-pages">
-      <button class="p3-pg-btn" @click="prevPage" :disabled="currentPage <= 1">
-        ← 上一頁
-      </button>
+        <div class="p3-pg-pages">
+          <button class="p3-pg-btn" @click="prevPage" :disabled="currentPage <= 1">
+            ← 上一頁
+          </button>
 
-      <span class="p3-pg-text">第 <b>{{ currentPage }}</b> / <b>{{ totalPages }}</b> 頁</span>
+          <span class="p3-pg-text">第 <b>{{ currentPage }}</b> / <b>{{ totalPages }}</b> 頁</span>
 
-      <button class="p3-pg-btn" @click="nextPage" :disabled="currentPage >= totalPages">
-        下一頁 →
-      </button>
+          <button class="p3-pg-btn" @click="nextPage" :disabled="currentPage >= totalPages">
+            下一頁 →
+          </button>
+        </div>
+      </div>
+
+      <div class="p3-pagination-right">
+        <label class="p3-pg-field">
+          <span class="p3-pg-label">跳到</span>
+
+          <input v-model.number="jumpPage" type="number" :min="1" :max="totalPages" class="p3-pg-jump"
+            @keydown.enter="goToPage(jumpPage)" />
+
+          <button class="p3-pg-go" @click="goToPage(jumpPage)">GO</button>
+        </label>
+
+        <div class="p3-pg-summary">
+           目前顯示 <b>{{ coursesPage.length }}</b> / <b>{{ coursesView.length }}</b> 筆
+          <span v-if="coursesAll.length">（總共 {{ coursesAll.length }} 筆）</span>
+        </div>
+      </div>
     </div>
-  </div>
-
-  <div class="p3-pagination-right">
-    <label class="p3-pg-field">
-      <span class="p3-pg-label">跳到</span>
-
-      <input
-        v-model.number="jumpPage"
-        type="number"
-        :min="1"
-        :max="totalPages"
-        class="p3-pg-jump"
-        @keydown.enter="goToPage(jumpPage)"
-      />
-
-      <button class="p3-pg-go" @click="goToPage(jumpPage)">GO</button>
-    </label>
-
-    <div class="p3-pg-summary">
-      ✅ 目前顯示 <b>{{ coursesPage.length }}</b> / <b>{{ coursesView.length }}</b> 筆
-      <span v-if="coursesAll.length">（總共 {{ coursesAll.length }} 筆）</span>
-    </div>
-  </div>
-</div>
-
 
     <p class="p3-hint">
-       已串：GET <b>/api/courses</b> + <b>/api/departments</b> + <b>/api/teachers</b> + <b>/api/courseteacher</b>
-      ｜🧪 查詢先用前端篩選｜🧠 後續再補：keyword 查詢 / 新增 / 修改 / 刪除 / 人數統計
+      已串：GET <b>/api/courses</b> + <b>/api/departments</b> + <b>/api/teachers</b> + <b>/api/courseteacher</b>
+      + <b>/api/classroom</b> + <b>/api/buildings</b> + <b>/api/buildingMaps</b>
+      ｜🧪 查詢先用前端篩選｜🧠 後續再補：新增 / 修改 / 刪除
     </p>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 
-/**
- * ✅ API Base
- * - 有 Vite proxy：用相對路徑 "/api/xxx"
- * - 沒 proxy：在 .env 設 VITE_API_BASE_URL=http://127.0.0.1:5000
- */
 const API_BASE = import.meta?.env?.VITE_API_BASE_URL || "";
 
 /* ========= state ========= */
@@ -159,40 +165,56 @@ const errorMsg = ref("");
 const searchText = ref("");
 const coursesAll = ref([]);
 
+/* ✅ maps */
+const courseRoomMap = ref(new Map());     // courseID -> { buildingCode, roomNumber }
+const buildingNameMap = ref(new Map());   // buildingCode -> buildingName
+const buildingImgMap = ref(new Map());    // buildingCode -> imageUrl
+
+/* ✅ tooltip state */
+const roomTipOpen = ref(false);
+const roomPinned = ref(false);
+const activeRoomId = ref("");
+
 /* ✅ pagination state */
-const pageSize = ref(20);          // 你想更順可改 10
+const pageSize = ref(20);
 const currentPage = ref(1);
 const jumpPage = ref(1);
 
 /* ========= helpers ========= */
 function mapWeek(v) {
   const map = {
-    "0": "日",
-    "1": "一",
-    "2": "二",
-    "3": "三",
-    "4": "四",
-    "5": "五",
-    "6": "六",
-    "7": "日",
-    日: "日",
-    一: "一",
-    二: "二",
-    三: "三",
-    四: "四",
-    五: "五",
-    六: "六",
+    "0": "日", "1": "一", "2": "二", "3": "三", "4": "四", "5": "五", "6": "六", "7": "日",
+    日: "日", 一: "一", 二: "二", 三: "三", 四: "四", 五: "五", 六: "六"
   };
   const key = String(v ?? "").trim();
   return map[key] || (key ? key : "—");
 }
 
 function mapSection(v) {
-  // timesSlot: "6,7" → "6-7"
   if (v == null) return "—";
   const s = String(v).trim();
   if (!s) return "—";
   return s.includes(",") ? s.split(",").join("-") : s;
+}
+
+/** ✅ buildingMaps 的 imagePath -> img src（前端轉路徑規則） */
+function normalizeImagePath(p) {
+  const raw = String(p || "").trim();
+  if (!raw) return "";
+
+  // 完整 URL
+  if (/^https?:\/\//i.test(raw)) return raw;
+
+  const cleaned = raw.replace(/\\/g, "/");
+
+  // 常見：./pubilc/B.png 或 ./public/B.png -> /B.png（走前端 public）
+  if (cleaned.startsWith("./pubilc/")) return "/" + cleaned.replace("./pubilc/", "");
+  if (cleaned.startsWith("./public/")) return "/" + cleaned.replace("./public/", "");
+
+  // 若後端其實有提供靜態路由
+  if (cleaned.startsWith("/")) return `${API_BASE}${cleaned}`;
+
+  return `${API_BASE}/${cleaned.replace(/^\.\//, "")}`;
 }
 
 async function getJson(path) {
@@ -204,9 +226,7 @@ async function getJson(path) {
   return await res.json();
 }
 
-/**
- * ✅ 把「4 張表」合併成前端要顯示的資料
- */
+/* ========= join builders ========= */
 function buildJoinedCourses({ courses, departments, courseteacher, teachers }) {
   // dept map
   const deptMap = new Map();
@@ -236,62 +256,109 @@ function buildJoinedCourses({ courses, departments, courseteacher, teachers }) {
     courseToTeacherIds.get(key).push(String(teacherId));
   }
 
-  // normalize + join
   return (courses || [])
     .map((row) => {
       const id = String(row.courseID ?? row.courseId ?? row.id ?? "");
       const name = String(row.courseName ?? row.name ?? "");
       const deptId = String(row.departmentID ?? row.departmentId ?? row.dept ?? "");
       const deptName = deptMap.get(deptId);
-      const dept = deptName && deptName.trim() ? deptName : deptId || "—";
+      const dept = deptName && deptName.trim() ? deptName : (deptId || "—");
 
       const teacherIds = courseToTeacherIds.get(id) || [];
       const teacherNames = teacherIds
         .map((tid) => teacherMap.get(String(tid)) || "")
         .filter((x) => x && x.trim());
 
-      // ✅ 教師顯示：超過 2 位就 ...
       const teacherList = teacherNames;
-      let teacherDisplay = "—";
-      if (teacherList.length > 0) {
-        teacherDisplay =
-          teacherList.length <= 2
-            ? teacherList.join("、")
+      const teacher =
+        teacherList.length === 0 ? "—"
+          : teacherList.length <= 2 ? teacherList.join("、")
             : `${teacherList.slice(0, 2).join("、")}…`;
-      }
 
       const credit = row.credits ?? row.credit ?? "—";
       const category = row.courseType ?? row.category ?? "—";
       const day = mapWeek(row.DayOfWeek ?? row.day);
       const section = mapSection(row.timesSlot ?? row.section);
 
-      // ⚠️ 人數：目前後端沒提供（通常要 COUNT(userAndCourseEnrollments)）
-      const people = row.people ?? row.capacity ?? "—";
+      // ✅ 教室 join：courseID -> classroom
+      const r = courseRoomMap.value.get(id) || null;
+      const buildingCode = r?.buildingCode ? String(r.buildingCode).trim() : "";
+      const roomNumber = r?.roomNumber ? String(r.roomNumber).trim() : "";
+      const roomCode = (buildingCode && roomNumber) ? `${buildingCode}${roomNumber}` : "";
+
+      const buildingName = buildingCode
+        ? (buildingNameMap.value.get(buildingCode) || `${buildingCode}棟`)
+        : "";
+
+      const roomImage = buildingCode
+        ? (buildingImgMap.value.get(buildingCode) || "")
+        : "";
 
       return {
         id,
         dept,
         name,
-        people: String(people ?? "—"),
-
-        teacherList, // 搜尋用（完整）
-        teacher: teacherDisplay, // 顯示用（最多 2 位）
-
+        teacherList,
+        teacher,
         category: String(category ?? "—"),
         credit: String(credit ?? "—"),
         day,
         section,
+
+        roomCode,
+        buildingCode,
+        buildingName,
+        roomImage,
       };
     })
     .filter((c) => c.id || c.name);
 }
 
-/* ========= API ========= */
+/* ========= API fetch ========= */
+async function fetchMaps() {
+  const [classroom, buildings, buildingMaps] = await Promise.all([
+    getJson("/api/classroom"),
+    getJson("/api/buildings"),
+    getJson("/api/buildingMaps"),
+  ]);
+
+  // courseID -> buildingCode/roomNumber
+  const crm = new Map();
+  for (const x of classroom || []) {
+    const cid = String(x.courseID ?? x.courseId ?? "").trim();
+    if (!cid) continue;
+    crm.set(cid, {
+      buildingCode: x.buildingCode ?? "",
+      roomNumber: x.roomNumber ?? "",
+    });
+  }
+  courseRoomMap.value = crm;
+
+  // buildingCode -> buildingName
+  const bnm = new Map();
+  for (const b of buildings || []) {
+    const code = String(b.buildingCode ?? "").trim();
+    if (!code) continue;
+    bnm.set(code, String(b.buildingName ?? "").trim());
+  }
+  buildingNameMap.value = bnm;
+
+  // buildingCode -> image url
+  const bim = new Map();
+  for (const m of buildingMaps || []) {
+    const code = String(m.buildingCode ?? "").trim();
+    if (!code) continue;
+    bim.set(code, normalizeImagePath(m.imagePath));
+  }
+  buildingImgMap.value = bim;
+}
+
 async function fetchCoursesWithJoins() {
   errorMsg.value = "";
   isLoading.value = true;
-
   try {
+    await fetchMaps();
+
     const [courses, departments, teachers, courseteacher] = await Promise.all([
       getJson("/api/courses"),
       getJson("/api/departments"),
@@ -299,14 +366,7 @@ async function fetchCoursesWithJoins() {
       getJson("/api/courseteacher"),
     ]);
 
-    if (!Array.isArray(courses)) throw new Error("/api/courses 回傳不是陣列");
-    if (!Array.isArray(departments)) throw new Error("/api/departments 回傳不是陣列");
-    if (!Array.isArray(teachers)) throw new Error("/api/teachers 回傳不是陣列");
-    if (!Array.isArray(courseteacher)) throw new Error("/api/courseteacher 回傳不是陣列");
-
     coursesAll.value = buildJoinedCourses({ courses, departments, courseteacher, teachers });
-
-    // ✅ 抓完資料回到第 1 頁
     currentPage.value = 1;
     jumpPage.value = 1;
   } catch (e) {
@@ -327,12 +387,13 @@ const coursesView = computed(() => {
     return (
       String(c.name || "").toLowerCase().includes(lower) ||
       String(c.dept || "").toLowerCase().includes(lower) ||
-      teacherAll.includes(lower)
+      teacherAll.includes(lower) ||
+      String(c.roomCode || "").toLowerCase().includes(lower) ||
+      String(c.buildingName || "").toLowerCase().includes(lower)
     );
   });
 });
 
-/* ✅ pagination computed */
 const totalPages = computed(() => {
   const total = coursesView.value.length;
   const size = Math.max(1, Number(pageSize.value) || 20);
@@ -346,85 +407,95 @@ const coursesPage = computed(() => {
   return coursesView.value.slice(start, start + size);
 });
 
-/* ✅ 分頁控制 */
 function clampPage(p) {
   const n = Number(p) || 1;
   return Math.min(Math.max(1, n), totalPages.value);
 }
+function prevPage() { currentPage.value = clampPage(currentPage.value - 1); jumpPage.value = currentPage.value; }
+function nextPage() { currentPage.value = clampPage(currentPage.value + 1); jumpPage.value = currentPage.value; }
+function goToPage(p) { currentPage.value = clampPage(p); jumpPage.value = currentPage.value; }
 
-function prevPage() {
-  currentPage.value = clampPage(currentPage.value - 1);
-  jumpPage.value = currentPage.value;
+watch(pageSize, () => { currentPage.value = clampPage(currentPage.value); jumpPage.value = currentPage.value; });
+watch(coursesView, () => { currentPage.value = clampPage(currentPage.value); jumpPage.value = currentPage.value; });
+
+/* ========= tooltip ========= */
+function openRoomTip(course, byClick) {
+  if (!course?.id) return;
+  if (!byClick && roomPinned.value) return;
+  activeRoomId.value = course.id;
+  roomTipOpen.value = true;
+  if (byClick) roomPinned.value = true;
 }
-
-function nextPage() {
-  currentPage.value = clampPage(currentPage.value + 1);
-  jumpPage.value = currentPage.value;
+function closeRoomTipIfNotPinned() {
+  if (roomPinned.value) return;
+  roomTipOpen.value = false;
+  activeRoomId.value = "";
 }
-
-function goToPage(p) {
-  currentPage.value = clampPage(p);
-  jumpPage.value = currentPage.value;
+function toggleRoomPinned(course) {
+  if (!course?.id) return;
+  if (roomTipOpen.value && activeRoomId.value === course.id && roomPinned.value) {
+    roomPinned.value = false;
+    roomTipOpen.value = false;
+    activeRoomId.value = "";
+    return;
+  }
+  openRoomTip(course, true);
 }
-
-/* ✅ 當你改 pageSize 或搜尋結果變少，要自動修正頁碼 */
-watch(pageSize, () => {
-  currentPage.value = clampPage(currentPage.value);
-  jumpPage.value = currentPage.value;
-});
-
-watch(coursesView, () => {
-  currentPage.value = clampPage(currentPage.value);
-  jumpPage.value = currentPage.value;
-});
+function onDocClick(e) {
+  if (!roomTipOpen.value) return;
+  const el = e.target.closest?.(".room-wrap");
+  if (!el) {
+    roomPinned.value = false;
+    roomTipOpen.value = false;
+    activeRoomId.value = "";
+  }
+}
 
 /* ========= actions ========= */
-async function search() {
-  // ✅ 目前後端沒有 keyword 查詢，所以不需要再打 API
-  // 只靠 computed 篩選即可
-  currentPage.value = 1;
-  jumpPage.value = 1;
+async function search() { currentPage.value = 1; jumpPage.value = 1; }
+async function refresh() { await fetchCoursesWithJoins(); }
 
-  // 🧠 TODO：後端補 query 後，可改成打 /api/courses?keyword=...
-}
-
-async function refresh() {
-  await fetchCoursesWithJoins();
-}
-
-function addCourse() {
-  alert("TODO：新增課程（後端需提供 POST /api/courses 或 /api/admin/courses）");
-}
-
-function editCourse(course) {
-  alert(`TODO：修改課程（id=${course.id}）後端需提供 PUT /api/courses/${course.id}`);
-}
-
+function addCourse() { alert("TODO：新增課程（目前 API 看起來只有 GET）"); }
+function editCourse(course) { alert(`TODO：修改課程（id=${course.id}）（目前 API 看起來只有 GET）`); }
 function deleteCourse(course) {
   const ok = confirm(`確認刪除課程「${course.name}」？`);
   if (!ok) return;
-
-  // ✅ 目前後端沒有 DELETE，所以先做本地刪除（假動作）
   coursesAll.value = coursesAll.value.filter((c) => c.id !== course.id);
-
-  // 🧠 TODO（後端補上後打開）：
-  // await fetch(`${API_BASE}/api/courses/${encodeURIComponent(course.id)}`, { method: "DELETE" })
-  // await fetchCoursesWithJoins()
 }
 
 onMounted(async () => {
+  document.addEventListener("click", onDocClick);
   await fetchCoursesWithJoins();
 });
+onBeforeUnmount(() => document.removeEventListener("click", onDocClick));
 </script>
 
 <style scoped>
 /* ===== 搜尋列 ===== */
 .p3-search-row {
   display: grid;
-  grid-template-columns: 140px 1fr 120px 120px;
+  grid-template-columns: 140px minmax(0,1fr) auto auto;
   gap: 16px;
   align-items: center;
   margin-bottom: 20px;
+}
+/* ✅ 按鈕文字不換行 + 垂直置中，避免字被吃 */
+.p3-search-row .p3-btn{
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  white-space: nowrap;
+  line-height: 1;
+  padding: 0 18px;       /* 可依你喜好調 */
+  box-sizing: border-box;
+}
+.p3-search-row .p3-btn:active{
+  transform: none !important;
+}
+
+.p3-search-row .p3-input,
+.p3-search-row .p3-btn {
+  height: 44px;
 }
 
 .p3-search-label {
@@ -433,7 +504,7 @@ onMounted(async () => {
   letter-spacing: 0.08em;
 }
 
-@media (max-width: 860px) {
+@media (max-width:860px) {
   .p3-search-row {
     grid-template-columns: 1fr;
   }
@@ -444,20 +515,29 @@ onMounted(async () => {
   text-align: center;
   margin-bottom: 18px;
 }
+.p3-actions-center .p3-btn:active{
+  transform: none !important;
+}
 
-/* ===== 表格 ===== */
+/* ✅ tooltip 不被卡：讓卡片、表格容器可溢出 */
+.p3-card {
+  overflow: visible;
+}
+
 .p3-table-wrap {
   margin-top: 12px;
   background: rgba(12, 26, 44, 0.6);
   border-radius: 16px;
   overflow-x: auto;
+  overflow-y: visible;
+  position: relative;
 }
 
 .p3-table {
   width: 100%;
   border-collapse: collapse;
   font-size: 14px;
-  min-width: 980px;
+  min-width: 1100px;
 }
 
 .p3-table th {
@@ -491,7 +571,6 @@ onMounted(async () => {
   color: rgba(180, 200, 230, 0.8);
 }
 
-/* ===== 操作 ===== */
 .action {
   cursor: pointer;
   font-weight: 900;
@@ -504,14 +583,6 @@ onMounted(async () => {
 
 .danger {
   color: #ff6b6b;
-}
-
-/* ===== 結果 ===== */
-.p3-result {
-  text-align: center;
-  margin-top: 18px;
-  font-size: 16px;
-  opacity: 0.9;
 }
 
 /* alert */
@@ -532,17 +603,118 @@ onMounted(async () => {
   font-size: 12px;
   color: rgba(180, 200, 230, 0.75);
 }
-/* =========================
-   ✅ ONLY 分頁區專用樣式
-   不影響其他元件
-========================= */
 
-.p3-pagination-bar{
+/* =========================
+   ✅ 教室 tooltip
+========================= */
+.room-cell {
+  position: relative;
+}
+
+.room-wrap {
+  position: relative;
+  display: inline-block;
+}
+
+.room-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(0, 0, 0, 0.16);
+  color: rgba(234, 242, 255, 0.92);
+  cursor: pointer;
+  font-weight: 900;
+}
+
+.room-btn:hover {
+  border-color: rgba(47, 230, 255, 0.28);
+  box-shadow: 0 10px 20px rgba(0, 0, 0, 0.25);
+}
+
+/* ✅ 置中彈出：比較不會被右側切掉 */
+.room-tip {
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 10px);
+  transform: translateX(-50%);
+  z-index: 999;
+  width: min(420px, 80vw);
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(47, 230, 255, 0.22);
+  background: rgba(10, 20, 38, 0.92);
+  backdrop-filter: blur(16px);
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), 0 0 30px rgba(47, 230, 255, 0.12);
+}
+
+.room-tip-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.room-tip-title {
+  font-weight: 1000;
+  letter-spacing: .04em;
+}
+
+.room-tip-sub {
+  font-size: 12px;
+  color: rgba(180, 210, 255, 0.75);
+  font-weight: 800;
+}
+
+.pin {
+  color: rgba(47, 230, 255, 0.9);
+}
+
+.room-tip-img {
+  max-height: 320px;
+  overflow: auto;
+  border-radius: 12px;
+}
+
+.room-tip-img img {
+  width: 100%;
+  height: auto;
+  display: block;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.10);
+}
+
+.room-tip-empty {
+  padding: 12px;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  color: rgba(180, 210, 255, 0.75);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+/* transition */
+.p3-dd-fade-enter-active,
+.p3-dd-fade-leave-active {
+  transition: opacity .15s ease, transform .15s ease;
+}
+
+.p3-dd-fade-enter-from,
+.p3-dd-fade-leave-to {
+  opacity: 0;
+  transform: translateY(-4px);
+}
+
+/* ===== 分頁（保留你原本風格） ===== */
+.p3-pagination-bar {
   margin-top: 14px;
   padding: 12px 14px;
   border-radius: 16px;
-  background: rgba(255,255,255,0.06);
-  border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -550,119 +722,99 @@ onMounted(async () => {
   flex-wrap: wrap;
 }
 
-/* 左右兩區 */
 .p3-pagination-left,
-.p3-pagination-right{
+.p3-pagination-right {
   display: flex;
   align-items: center;
   gap: 14px;
   flex-wrap: wrap;
 }
 
-/* 小欄位組合（每頁顯示 / 跳到） */
-.p3-pg-field{
+.p3-pg-field {
   display: inline-flex;
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
   border-radius: 14px;
-  background: rgba(0,0,0,0.16);
-  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.10);
 }
 
-.p3-pg-label{
+.p3-pg-label {
   font-size: 12px;
   font-weight: 800;
-  color: rgba(180,200,230,0.8);
+  color: rgba(180, 200, 230, 0.8);
 }
 
-/* select */
-.p3-pg-select{
+.p3-pg-select {
   height: 38px;
   padding: 0 12px;
   border-radius: 12px;
-  border: 1px solid rgba(255,255,255,0.16);
-  background: rgba(0,0,0,0.18);
-  color: rgba(234,242,255,0.92);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.18);
+  color: rgba(234, 242, 255, 0.92);
   font-weight: 900;
   outline: none;
 }
 
-/* 上/下頁區 */
-.p3-pg-pages{
+.p3-pg-pages {
   display: inline-flex;
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
   border-radius: 14px;
-  background: rgba(0,0,0,0.16);
-  border: 1px solid rgba(255,255,255,0.10);
+  background: rgba(0, 0, 0, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.10);
 }
 
-.p3-pg-btn{
+.p3-pg-btn {
   height: 38px;
   padding: 0 14px;
   border-radius: 12px;
-  border: 1px solid rgba(255,255,255,0.14);
-  background: rgba(255,255,255,0.06);
-  color: rgba(234,242,255,0.86);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(234, 242, 255, 0.86);
   font-weight: 900;
   cursor: pointer;
-  transition: transform .12s ease, box-shadow .18s ease, border-color .18s ease;
 }
 
-.p3-pg-btn:hover:not(:disabled){
-  transform: translateY(-1px);
-  box-shadow: 0 10px 22px rgba(0,0,0,0.25);
-  border-color: rgba(47,230,255,0.28);
-}
-
-.p3-pg-btn:disabled{
+.p3-pg-btn:disabled {
   opacity: .45;
   cursor: not-allowed;
 }
 
-.p3-pg-text{
+.p3-pg-text {
   font-size: 13px;
-  color: rgba(234,242,255,0.86);
+  color: rgba(234, 242, 255, 0.86);
 }
 
-/* 跳頁 input + GO */
-.p3-pg-jump{
+.p3-pg-jump {
   width: 92px;
   height: 38px;
   padding: 0 12px;
   border-radius: 12px;
-  border: 1px solid rgba(255,255,255,0.16);
-  background: rgba(0,0,0,0.18);
-  color: rgba(234,242,255,0.92);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.18);
+  color: rgba(234, 242, 255, 0.92);
   font-weight: 900;
   outline: none;
 }
 
-.p3-pg-go{
+.p3-pg-go {
   height: 38px;
   padding: 0 16px;
   border-radius: 12px;
   border: 0;
-  background: linear-gradient(135deg, rgba(47,230,255,0.95), rgba(148,123,255,0.55));
+  background: linear-gradient(135deg, rgba(47, 230, 255, 0.95), rgba(148, 123, 255, 0.55));
   color: #061224;
   font-weight: 1000;
   letter-spacing: 0.04em;
   cursor: pointer;
-  transition: transform .12s ease, box-shadow .18s ease;
 }
 
-.p3-pg-go:hover{
-  transform: translateY(-1px);
-  box-shadow: 0 12px 26px rgba(47,230,255,0.18);
-}
-
-/* summary */
-.p3-pg-summary{
+.p3-pg-summary {
   font-size: 12px;
-  color: rgba(180,200,230,0.78);
+  color: rgba(180, 200, 230, 0.78);
   font-weight: 800;
 }
-
 </style>
