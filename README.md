@@ -1,4 +1,3 @@
-````md
 # Class System Frontend (Test Build)
 
 此專案為「課程查詢 / 課表 / 收藏 / 預選 / 管理後台」之前端（Vue + Vite）。
