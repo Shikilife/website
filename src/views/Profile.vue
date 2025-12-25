@@ -70,9 +70,7 @@
 
       <!-- Footer hint + 手機返回 -->
       <div class="profile-foot">
-        <div class="profile-hint">
-          Tip：之後串 API 時，只要把 store.profile 補上對應欄位，這頁不用大改 ✅
-        </div>
+
 
         <!-- ✅ 返回按鈕（手機/窄螢幕會比較好按） -->
         <div class="profile-actions profile-actions-bottom">

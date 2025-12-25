@@ -118,7 +118,7 @@ async function logoutUser() {
 }
 
 .p3-item:active{
-  transform: skewX(-10deg) scale(0.98);
+  transform: scale(0.98);
 }
 
 .p3-item-dot{
