@@ -1,23 +1,59 @@
 // src/api.js
 
-const RAW_BASE = import.meta?.env?.VITE_API_BASE_URL || "";
+const DEFAULT_ORIGIN = "http://localhost:5000";
 
-// ✅ 去掉結尾的 /，避免 /api//users 這種怪路徑
-const API_BASE = String(RAW_BASE).replace(/\/+$/, "") || "http://localhost:5000/api";
+/**
+ * ✅ 把 base 正規化成「一定以 /api 結尾」
+ * 允許 env 寫：
+ * - http://localhost:5000
+ * - http://localhost:5000/
+ * - http://localhost:5000/api
+ * - http://localhost:5000/api/
+ */
+function normalizeBase(raw) {
+  let base = String(raw || "").trim();
+  if (!base) base = DEFAULT_ORIGIN;
+
+  // 去尾巴 /
+  base = base.replace(/\/+$/, "");
+
+  // 確保最後是 /api
+  if (!/\/api$/i.test(base)) base = `${base}/api`;
+
+  return base;
+}
+
+const API_BASE = normalizeBase(import.meta.env.VITE_API_BASE_URL);
 
 function getToken() {
   return localStorage.getItem("auth_token") || "";
 }
 
+/**
+ * ✅ 統一組 URL
+ * 允許你傳：
+ * - "users"
+ * - "/users"
+ * - "api/users"
+ * - "/api/users"
+ * 都會變成： `${API_BASE}/users`
+ */
 function toUrl(path) {
   if (!path) return API_BASE;
 
   // 完整 URL 直接用
   if (/^https?:\/\//i.test(path)) return path;
 
-  // 確保 path 前面有 /
-  const p = path.startsWith("/") ? path : `/${path}`;
-  return `${API_BASE}${p}`;
+  let p = String(path).trim();
+  if (!p) return API_BASE;
+
+  // 移除前面的 /
+  p = p.replace(/^\/+/, "");
+
+  // 如果你傳了 api/users，把 api/ 拿掉避免 /api/api/users
+  p = p.replace(/^api\/+/i, "");
+
+  return p ? `${API_BASE}/${p}` : API_BASE;
 }
 
 async function parseErrorBody(res) {
@@ -47,6 +83,8 @@ async function request(path, { method = "GET", body } = {}) {
     method,
     headers,
     body: body != null ? JSON.stringify(body) : undefined,
+    // 如果你之後改成 cookie session，才需要這行：
+    // credentials: "include",
   });
 
   if (!res.ok) {
@@ -54,7 +92,6 @@ async function request(path, { method = "GET", body } = {}) {
     if (res.status === 401 || res.status === 403) {
       localStorage.removeItem("auth_token");
     }
-    // ✅ 把真正打到的 URL 印在錯誤裡，你一看就知道打去哪
     throw new Error(`API ${res.status}: ${msg} (${url})`);
   }
 
@@ -67,15 +104,7 @@ async function request(path, { method = "GET", body } = {}) {
   return text || null;
 }
 
-export async function apiGet(path) {
-  return request(path, { method: "GET" });
-}
-export async function apiPost(path, body) {
-  return request(path, { method: "POST", body });
-}
-export async function apiPut(path, body) {
-  return request(path, { method: "PUT", body });
-}
-export async function apiDelete(path) {
-  return request(path, { method: "DELETE" });
-}
+export const apiGet = (path) => request(path, { method: "GET" });
+export const apiPost = (path, body) => request(path, { method: "POST", body });
+export const apiPut = (path, body) => request(path, { method: "PUT", body });
+export const apiDelete = (path) => request(path, { method: "DELETE" });

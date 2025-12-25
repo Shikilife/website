@@ -232,6 +232,7 @@
                 </td>
 
                 <td v-if="user.isLoggedIn && !user.isAdmin" class="center">
+                  
                   <button
                     class="p3-mini-btn ghost"
                     :class="{ active: user.isFavorite(c.courseID) }"
@@ -376,28 +377,26 @@ function placeDropdown(btnEl, styleRef, widthMode = "btn") {
   const pad = 10;
   const gap = 8;
 
-  const width = widthMode === "btn" ? r.width : 260;
+  const width =
+    typeof widthMode === "number"
+      ? widthMode
+      : widthMode === "btn"
+        ? r.width
+        : 260;
 
   let left = r.left;
   let top = r.bottom + gap;
 
-  // ✅ 左右 clamp
   left = clamp(left, pad, window.innerWidth - pad - width);
 
-  // ✅ 下面可用高度（避免撞到底部/工作列）
   const maxHBelow = window.innerHeight - pad - top;
 
-  // ✅ 如果下面太小，就改成往上展開
-  // 240 你可以調整成你 dropdown 平均高度
   const PREFER_H = 145;
   if (maxHBelow < 160) {
-    // 往上翻：讓 menu 的底對齊按鈕上緣
-    // 先假設希望高度 PREFER_H，再用 clamp 避免超出
     const preferTop = r.top - gap - PREFER_H;
     top = clamp(preferTop, pad, window.innerHeight - pad - 160);
   }
 
-  // ✅ 動態 maxHeight：剩多少就用多少，並可滾動
   const maxH = window.innerHeight - pad - top;
 
   styleRef.value = {
@@ -410,6 +409,7 @@ function placeDropdown(btnEl, styleRef, widthMode = "btn") {
     zIndex: 60000,
   };
 }
+
 
 function toggleSemesterDD() {
   ddOpen.value = !ddOpen.value;
