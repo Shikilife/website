@@ -159,9 +159,7 @@
               </label>
             </div>
 
-            <p class="tip">
-              ※ 目前只保證 <b>/api/courses</b> CRUD。教師/教室是 join（courseteacher / classroom），後端若沒新增/修改 API，這裡先不動。
-            </p>
+          
           </div>
 
           <footer class="p3-modal-foot">
